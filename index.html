@@ -3128,10 +3128,16 @@ function escReq(caminho, metodo, corpo){
 function casaMontadorEscala(nomePlan, listaEscala){
   const n = semAcento(nomePlan);
   if(!n) return null;
-  let m = listaEscala.find(x => semAcento(x.nome) === n);
+  let m = listaEscala.find(x => semAcento(x.nome) === n);            /* igual */
   if(m) return m;
-  m = listaEscala.find(x => semAcento(x.nome).startsWith(n));
+  m = listaEscala.find(x => semAcento(x.nome).startsWith(n));        /* começa igual */
   if(m) return m;
+  /* todos os pedaços do nome aparecem lá (ordem diferente, nome do meio, etc.) */
+  const partes = semAcentoSimples(nomePlan).split(/\s+/).filter(p=>p.length>2);
+  if(partes.length){
+    m = listaEscala.find(x => { const alvo = semAcentoSimples(x.nome); return partes.every(p=>alvo.includes(p)); });
+    if(m) return m;
+  }
   return listaEscala.find(x => semAcento(x.nome).includes(n)) || null;
 }
 async function enviarParaEscala(id, silencioso){
@@ -3169,10 +3175,10 @@ async function enviarParaEscala(id, silencioso){
     if(linhas.length) await escReq('escala_marcas?on_conflict=chave', 'POST', linhas);
     ev.escalaEnviada = HOJE;
     salvar(); if(!silencioso) verEvento(id);
-    const partes = [linhas.length + ' marcação(ões) de TRABALHOU enviadas para a Escala ('+casados.length+' pessoa(s), líder incluído, × '+dias.length+' dia(s))'];
+    const partes = ['📅 Escala preenchida: ' + casados.map(c=>c.plan).join(', ') + ' (' + dias.length + ' dia(s), ' + linhas.length + ' marcação(ões))'];
     if(pulados) partes.push(pulados + ' dia(s) preservados (férias/folga/atestado já marcados lá)');
-    if(semCadastro.length) partes.push('sem cadastro na Escala: ' + semCadastro.join(', '));
-    toast('📅 ' + partes.join(' · ') + '.');
+    if(semCadastro.length) partes.push('⚠ não encontrei na Escala: ' + semCadastro.join(', ') + ' — confira o nome no cadastro dela');
+    toast(partes.join(' · ') + '.');
   }catch(err){
     if(!silencioso) toast('Não consegui falar com a Escala de Montadores: ' + err.message + '. Confira a internet e tente de novo.');
   }
