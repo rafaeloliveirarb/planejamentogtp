@@ -203,6 +203,17 @@ select.cad{max-width:200px}
 .b-blue{background:#e8f1fd;color:var(--blue)}
 .b-green{background:#e6f6ee;color:var(--green)}
 .b-amber{background:#fdf4e0;color:#b47f08}
+.fasefiltro{background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.ff-tit{font-size:12.5px;font-weight:700;color:var(--ink2);margin-bottom:9px;display:flex;align-items:center;gap:8px}
+.ff-chips{display:flex;gap:7px;flex-wrap:wrap}
+.ff-chip{border:1px solid var(--line);background:#fff;color:var(--muted);border-radius:20px;padding:6px 12px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.ff-chip b{opacity:.7;font-size:11px}
+.ff-chip.on{background:#e8f1fd;border-color:#9cc0f0;color:#1c5fb8}
+.b-terc{background:#efecfa;color:#6b5bb5}
+.b-fim{background:#e6f6ee;color:#0f8a4d}
+.b-canc{background:#eef1f6;color:#8b95a7}
+.card.encerrado{opacity:.62}
+.card.encerrado:hover{opacity:1}
 .fase.op-m{background:#1c5fb8;color:#fff;border-color:#1c5fb8;animation:pulsa 2.2s infinite}
 .fase.op-d{background:#b0483c;color:#fff;border-color:#b0483c;animation:pulsa 2.2s infinite}
 .fase.op-e{background:#0f8a4d;color:#fff;border-color:#0f8a4d}
@@ -325,6 +336,13 @@ label.f input:focus,label.f select:focus,label.f textarea:focus{border-color:#9f
       <h1>Central de Planejamento Logístico</h1>
       <div class="periods" id="periods"></div>
       <select class="pill" id="filtro-fase" style="padding:9px 14px" onchange="faseFiltro=this.value;renderQuadro()"></select>
+      <select class="pill" id="filtro-esp" style="padding:9px 14px" onchange="espFiltro=this.value;renderQuadro()">
+        <option value="ativos">Esconder encerrados</option>
+        <option value="todos">Mostrar tudo</option>
+        <option value="terceirizado">Só terceirizados</option>
+        <option value="finalizado">Só finalizados</option>
+        <option value="cancelado">Só cancelados</option>
+      </select>
       <div class="datefiltro" title="Filtrar por data">
         <input type="date" id="f-data-ini" onchange="dataIni=this.value;renderPeriodos();renderQuadro()">
         <span>até</span>
@@ -332,6 +350,7 @@ label.f input:focus,label.f select:focus,label.f textarea:focus{border-color:#9f
         <button id="f-data-limpar" onclick="limparDatas()" title="Limpar filtro de data">✕</button>
       </div>
       <input class="search" id="busca" placeholder="Pesquisar evento...">
+      <button class="pill" onclick="sincronizarAgenda()" title="A agenda já se atualiza sozinha; use só se quiser forçar agora">📋 Sincronizar agenda</button>
       <button class="pill" onclick="exportarBackup()" title="Baixa um arquivo com todo o quadro, cadastros e o aprendizado da IA">💾 Backup</button>
       <button class="pill" onclick="redistribuirProdutores()" title="Solta os produtores fixados e deixa a IA sugerir de novo">⚖ Redistribuir produtores</button>
       <button class="pill" onclick="abrirLote()">Importar XML</button>
@@ -654,8 +673,8 @@ const Store = (() => {
    plan_config : cadastros, frota, materiais e aprendizado da IA
    ========================================================= */
 const NUVEM = {
-  url: 'https://zsiosgfdvjunniqrtukb.supabase.co',
-  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzaW9zZ2Zkdmp1bm5pcXJ0dWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NzQwMjksImV4cCI6MjEwNDM1MDAyOX0.0fgYNWgkFsmz9aWuzX2F7P66g2PBlnEVixa_qh724-g'
+  url: 'https://vybxkraqydsjrdvyxknp.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5YnhrcmFxeWRzanJkdnl4a25wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NjM0MzgsImV4cCI6MjEwNDQzOTQzOH0.QszdsS6tiYcqssMxKwQjfzlIDhqc5emzXKmw8vyZCxw'
 };
 let sb = null, nuvemOk = false, sincronizando = false;
 let idsConhecidos = new Set();   /* eventos que já existem na nuvem */
@@ -1177,6 +1196,11 @@ function montarEscala(frota, ag, ev, dEq){
 }
 
 function analisar(ev, ag){
+  if(evSemNossaEquipe(ev)){
+    /* sem equipe nossa: nada a sugerir e nada a conflitar */
+    return {equipe: ev.equipe || EQUIPE_TERC, produtor: ev.produtor || null, frota: [], escala: [],
+      carga: carga(ev), conflitos: [], just:{}};
+  }
   ag = ag || novaAgenda();
   const c = carga(ev);
   const dEq = diasEquipe(ev), dVe = diasVeiculo(ev);
@@ -1294,6 +1318,7 @@ function replanejar(){
   const ag = novaAgenda();
   const ordem = [...eventos].sort((a,b)=> a.mont.localeCompare(b.mont));
   ordem.forEach(e=>{
+    if(evSemNossaEquipe(e)) return; /* cancelado, finalizado ou tudo terceirizado: não prende ninguém */
     reservar(ag,'eq', e.equipe===EQUIPE_TERC ? null : e.equipe, diasEquipe(e), e.id);
     reservar(ag,'pr', (e.produtor && e.produtor!==SEM_PRODUTOR) ? e.produtor : null, diasEquipe(e), e.id);
     (e.veiculos||[]).forEach(v => reservar(ag,'ve', v, diasVeiculo(e), e.id));
@@ -1383,14 +1408,30 @@ function abrirHoje(){
 
 /* operação do dia, direto pelas datas: montagem > desmontagem > evento rolando */
 function operacaoHoje(ev, d){
+  if(evEncerrado(ev)) return null; /* cancelado ou finalizado não está na rua */
   d = d || HOJE;
   if(diasEntre(ev.mont, fimMont(ev)).includes(d)) return 'montagem';
   if(diasEntre(ev.desm, fimDesm(ev)).includes(d)) return 'desmontagem';
   if(ev.evt && dia(ev.evt) <= d && d <= dia(ev.evtFim || ev.evt)) return 'evento';
   return null;
 }
+const ESP = {
+  terceirizado: {texto:'🤝 Tudo terceirizado', classe:'b-terc', cor:'#6b5bb5'},
+  finalizado:   {texto:'✅ Finalizado',        classe:'b-fim',  cor:'#0f8a4d'},
+  cancelado:    {texto:'🚫 Cancelado',         classe:'b-canc', cor:'#8b95a7'}
+};
+const evEncerrado = ev => ev.esp==='cancelado' || ev.esp==='finalizado';
+const evSemNossaEquipe = ev => !!ev.esp; /* encerrado ou totalmente terceirizado */
+function definirEsp(id, valor){
+  const ev = eventos.find(e=>e.id===id); if(!ev) return;
+  ev.esp = (ev.esp === valor) ? null : valor; /* clicar de novo desfaz */
+  if(ev.esp==='terceirizado'){ ev.equipe = EQUIPE_TERC; ev.montOp = null; }
+  salvar(); renderQuadro(); verEvento(id);
+  toast(ev.esp ? 'Evento marcado como ' + ESP[ev.esp].texto.replace(/^\S+\s/,'').toLowerCase() + '.' : 'Evento voltou ao planejamento normal.');
+}
 function situacao(ev){
   const a = plano(ev);
+  if(ev.esp) return {cor:ESP[ev.esp].cor, classe:ESP[ev.esp].classe, texto:ESP[ev.esp].texto, tipo:'esp', a};
   if(a.conflitos.length) return {cor:'var(--red)', classe:'b-red', texto:'Conflito', tipo:'conflito', a};
   if(ev.estado==='confirmado') return {cor:'var(--green)', classe:'b-green', texto:'Planejado', tipo:'ok', a};
   if(ev.estado==='alinhamento') return {cor:'var(--blue)', classe:'b-blue', texto:'Em alinhamento', tipo:'alinhamento', a};
@@ -1422,7 +1463,7 @@ const descFrota = ids => ids.map(id=>{const v=veiculos.find(x=>x.id===id); retur
 /* =========================================================
    QUADRO
    ========================================================= */
-let periodo = 15, busca = '', faseFiltro = '', dataIni = '', dataFim = '';
+let periodo = 15, busca = '', faseFiltro = '', dataIni = '', dataFim = '', espFiltro = 'ativos';
 const PERIODOS = [['Hoje',0],['7 dias',7],['15 dias',15],['30 dias',30],['Todos',9999]];
 const HOJE = new Date().toISOString().slice(0,10);
 
@@ -1455,6 +1496,9 @@ function noPeriodo(ev){
 
 function filtrados(){
   return eventos.filter(noPeriodo)
+    .filter(e => espFiltro==='todos' ? true
+      : espFiltro==='ativos' ? !evEncerrado(e)   /* cancelado e finalizado saem da vista */
+      : e.esp === espFiltro)
     .filter(noIntervaloData)
     .filter(e => !faseFiltro || (e.fase||'sem fase') === faseFiltro)
     .filter(e => !busca || (e.nome+' '+e.os+' '+(produtorDo(e)||'')+' '+e.cidade+' '+(e.fase||'')+' '+(e.respNome||'')+' '+(e.respTel||'')).toLowerCase().includes(busca.toLowerCase()))
@@ -1511,8 +1555,10 @@ function cardEvento(ev, soSetorJC){
   const cor = corEquipe(eq);
   const prodSug = ev.produtor ? null : (a.produtor || null);
   let botoes;
+  const encerrado = evEncerrado(ev);
   if(s.tipo==='conflito') botoes = '<button onclick="verEvento(\''+ev.id+'\')">Resolver</button><button onclick="verEvento(\''+ev.id+'\')">Ver</button>';
   else if(s.tipo==='alinhamento') botoes = '<button class="primary" onclick="confirmar(\''+ev.id+'\')">Confirmar</button><button onclick="verEvento(\''+ev.id+'\')">Ver</button>';
+  else if(s.tipo==='esp') botoes = '<button onclick="verEvento(\''+ev.id+'\')">Ver</button>';
   else if(s.tipo==='sugestao') botoes = '<button class="primary" onclick="aceitar(\''+ev.id+'\')">Aceitar sugestão</button><button onclick="verEvento(\''+ev.id+'\')">Ver</button>';
   else botoes = '<button onclick="reabrir(\''+ev.id+'\')">Reabrir</button><button onclick="verEvento(\''+ev.id+'\')">Ver</button>';
   botoes += '<button title="Excluir evento" aria-label="Excluir evento" style="flex:0 0 44px;color:var(--red)" onclick="excluirEvento(\''+ev.id+'\')">✕</button>';
@@ -1591,7 +1637,11 @@ function verEvento(id){
 
   let acoes = '<button class="mini danger" style="margin-right:auto" onclick="excluirEvento(\''+ev.id+'\')">Excluir evento</button>'+
               '<button class="mini" onclick="fechar(\'ov-ev\')">Fechar</button>';
-  if(s.tipo==='sugestao' || s.tipo==='conflito') acoes += '<button class="mini" onclick="alinhar(\''+ev.id+'\')">Marcar em alinhamento</button><button class="btn-orange" onclick="aceitar(\''+ev.id+'\')">Aceitar sugestão</button>';
+  acoes += '<button class="mini" title="Montagem inteira por fornecedor: não usa equipe nem caminhão nosso" onclick="definirEsp(\''+ev.id+'\',\'terceirizado\')" style="'+(ev.esp==='terceirizado'?'border-color:#6b5bb5;color:#6b5bb5':'')+'">🤝 Terceirizado</button>'+
+    '<button class="mini" title="Evento concluído" onclick="definirEsp(\''+ev.id+'\',\'finalizado\')" style="'+(ev.esp==='finalizado'?'border-color:#0f8a4d;color:#0f8a4d':'')+'">✅ Finalizado</button>'+
+    '<button class="mini" title="Evento cancelado pelo cliente" onclick="definirEsp(\''+ev.id+'\',\'cancelado\')" style="'+(ev.esp==='cancelado'?'border-color:#b0483c;color:#b0483c':'')+'">🚫 Cancelado</button>';
+  if(ev.esp) acoes += '<button class="btn-orange" onclick="definirEsp(\''+ev.id+'\',\''+ev.esp+'\')">Voltar ao planejamento</button>';
+  else if(s.tipo==='sugestao' || s.tipo==='conflito') acoes += '<button class="mini" onclick="alinhar(\''+ev.id+'\')">Marcar em alinhamento</button><button class="btn-orange" onclick="aceitar(\''+ev.id+'\')">Aceitar sugestão</button>';
   else if(s.tipo==='alinhamento') acoes += '<button class="btn-orange" onclick="confirmar(\''+ev.id+'\')">Confirmar planejamento</button>';
   else acoes += '<button class="mini" onclick="reabrir(\''+ev.id+'\')">Reabrir planejamento</button>';
 
@@ -1678,6 +1728,8 @@ function verEvento(id){
           '</select>'+
           (ev.montOp ? ' <button class="mini" onclick="trocaMontador(\''+ev.id+'\',-2,null)">Voltar ao time padrão</button>' : '')+
           ' <button class="mini" onclick="enviarParaEscala(\''+ev.id+'\')" title="Marca TRABALHOU para estes montadores nos dias de montagem e desmontagem, lá na Escala de Montadores">📅 Preencher na Escala</button>'+
+          ' <button class="mini" onclick="enviarParaAgenda(\''+ev.id+'\')" title="Cria as tarefas deste evento na sua Gestão de Tempo">📋 Mandar para minha agenda</button>'+
+          (ev.agendaEnviada ? ' <span class="tag" style="color:#1c5fb8">na agenda desde '+fmtD(ev.agendaEnviada)+'</span>' : '')+
           (ev.escalaEnviada ? ' <span class="tag" style="color:#0f8a4d">na escala desde '+fmtD(ev.escalaEnviada)+'</span>' : '')+
         '</div></div>'+
       '<label class="f"><i>Adicionar veículo à operação</i><select onchange="addVeiculo(\''+ev.id+'\',this.value)">'+
@@ -1810,7 +1862,7 @@ function aceitar(id){
   /* confirmação do gestor: a IA aprende com o que foi aceito */
   aprender('equipe', ev, ev.equipe, 1);
   aprender('produtor', ev, ev.produtor, 1);
-  /* equipe confirmada: já preenche a Escala de Montadores (em segundo plano) */
+  /* equipe confirmada: preenche a Escala de Montadores (a agenda se atualiza sozinha) */
   enviarParaEscala(id, true);
   if(!(ev.veiculos||[]).length) ev.veiculos = [...a.frota];
   if(!(ev.escala||[]).length) ev.escala = a.escala.map(x=>({v:x.v, motorista:x.motorista}));
@@ -2556,6 +2608,8 @@ async function lerLote(files){
     /* não replicar: quem já está no quadro (mesma OS ou mesmo nome) entra
        desmarcado; se o usuário marcar, a importação ATUALIZA o evento existente
        em vez de criar outro. Linha repetida dentro da própria planilha só vale uma vez. */
+    /* filtro de fases começa no funil: Backlog e Alinhamento dos Responsáveis */
+    fasesLote = new Set([...new Set(lote.map(e=>e.fase || 'Sem fase'))].filter(f => f==='Sem fase' || faseImportavel(f)));
     /* prioridade sempre para quem tem número: processa os numerados primeiro,
        e a versão repetida sem número (mesmo nome-base) entra desmarcada */
     const vistOs = new Set(), vistNome = new Set();
@@ -2566,7 +2620,7 @@ async function lerLote(files){
       e.cancelado = faseCancelada(e.fase);
       /* fora do funil só vale para evento NOVO; quem já está no quadro
          continua atualizando em qualquer fase (o status acompanha o pipe) */
-      e.foraFunil = !e.duplicado && !e.cancelado && !faseImportavel(e.fase);
+      e.foraFunil = !fasesLote.has(e.fase || 'Sem fase');
       if(od) vistOs.add(od);
       if(nb) vistNome.add(nb);
       if(e.repetido || e.cancelado || e.foraFunil) e.marcado = false;
@@ -2579,7 +2633,7 @@ async function lerLote(files){
       (jaNoQuadro ? '<div class="alert green">' + jaNoQuadro + ' evento(s) já estão no quadro: serão ATUALIZADOS com os dados da planilha, sem duplicar. Desmarque os que não quiser mexer.</div>' : '') +
       (repetidos ? '<div class="alert amber">' + repetidos + ' linha(s) repetida(s) na própria planilha foram desmarcadas.</div>' : '') +
       (cancelados ? '<div class="alert amber">' + cancelados + ' evento(s) com fase de cancelamento/perda entraram desmarcados. Marque só se quiser mesmo trazê-los para o quadro.</div>' : '') +
-      (foraFunil ? '<div class="alert amber">' + foraFunil + ' evento(s) novos estão fora do funil (só BACKLOG e ALINHAMENTO DOS RESPONSÁVEIS entram sozinhos) e ficaram desmarcados. Marque se quiser trazer mesmo assim.</div>' : '') +
+      (foraFunil ? '<div class="alert amber">' + foraFunil + ' evento(s) ficaram de fora pelo filtro de fases (começa em BACKLOG e ALINHAMENTO DOS RESPONSÁVEIS). Ligue a fase que quiser puxar nos botões abaixo.</div>' : '') +
       (lote.some(e=>e.marcado && (!e.mont || !e.desm)) ? '<div class="alert amber">Tem evento sem data de montagem ou desmontagem: ele será importado mesmo assim e vai para a coluna "📅 Sem data" do quadro, para você preencher depois.</div>' : '') +
       (pendentes.length ? '<div class="alert amber">Materiais que ainda não existem no catálogo: ' + pendentes.join(', ') + '. Eles entraram com peso e volume zerados, então cadastre os valores na aba Materiais antes de confiar na sugestão de caminhão.</div>' : '');
     renderLote();
@@ -2591,6 +2645,7 @@ async function lerLote(files){
 function renderLote(){
   const ok = i => !!lote[i].nome; /* sem data também importa — cai na coluna "Sem data" */
   document.getElementById('lote-lista').innerHTML =
+    (fasesLote ? renderFiltroFases() : '') +
     '<div class="sec"><h4 style="display:flex;align-items:center;gap:10px">EVENTOS ENCONTRADOS'+
       '<span style="flex:1"></span>'+
       '<button class="mini" onclick="marcarLote(true)">Marcar todos</button>'+
@@ -2619,7 +2674,7 @@ function renderLote(){
         '<div class="lmeta">OS '+e.os+' · '+e.cidade+' · '+e.km+' km · '+e.arquivo+
           (e.repetido ? ' · <span class="tag" style="color:#b0483c">linha repetida na planilha</span>'
            : e.cancelado ? ' · <span class="tag" style="color:#b0483c">fase de cancelamento na planilha</span>'
-           : e.foraFunil ? ' · <span class="tag" style="color:#b47f08">fora do funil — só Backlog e Alinhamento entram sozinhos</span>'
+           : e.foraFunil ? ' · <span class="tag" style="color:#b47f08">fase desligada no filtro</span>'
            : e.duplicado ? ' · <span class="tag" style="color:#0f8a4d">já está no quadro — vai atualizar o existente</span>' : '')+
           (function(){ const est = faseParaEstado(e.fase);
             const rot = est==='confirmado' ? ['Planejado','b-green'] : est==='alinhamento' ? ['Em alinhamento','b-blue'] : ['Sugestão da IA','b-amber'];
@@ -2704,6 +2759,44 @@ function aplicarNaoLido(i, j){
 }
 function dispensarNaoLido(i, j){ lote[i].naoLidos.splice(j,1); renderLote(); }
 
+/* fases que a importação deve puxar — começa no funil e o gestor ajusta */
+let fasesLote = null;
+function fasesDoArquivo(){
+  return [...new Set(lote.map(e=>e.fase || 'Sem fase'))].sort();
+}
+function toggleFaseLote(f){
+  if(fasesLote.has(f)) fasesLote.delete(f); else fasesLote.add(f);
+  reavaliarLote();
+}
+function todasFasesLote(v){
+  fasesLote = v ? new Set(fasesDoArquivo()) : new Set();
+  reavaliarLote();
+}
+/* remarca o lote conforme o filtro de fases, mantendo as travas de segurança */
+function reavaliarLote(){
+  const vistOs = new Set(), vistNome = new Set();
+  lote.map(e=>e).sort((a,b)=> (osDigitos(b)?1:0) - (osDigitos(a)?1:0)).forEach(e=>{
+    const od = osDigitos(e), nb = nomeBase(e.nome);
+    e.repetido = (od && vistOs.has(od)) || (!od && nb && vistNome.has(nb));
+    if(od) vistOs.add(od);
+    if(nb) vistNome.add(nb);
+    e.foraFunil = !fasesLote.has(e.fase || 'Sem fase');
+    e.marcado = !e.repetido && !e.foraFunil;
+  });
+  renderLote();
+}
+function renderFiltroFases(){
+  const fs = fasesDoArquivo();
+  return '<div class="fasefiltro"><div class="ff-tit">Puxar quais fases? '+
+      '<button class="mini" onclick="todasFasesLote(true)">Todas</button> '+
+      '<button class="mini" onclick="todasFasesLote(false)">Nenhuma</button></div>'+
+    '<div class="ff-chips">'+ fs.map(f=>{
+      const n = lote.filter(e=>(e.fase||'Sem fase')===f).length;
+      const on = fasesLote.has(f);
+      return '<button class="ff-chip'+(on?' on':'')+'" onclick="toggleFaseLote('+JSON.stringify(f).replace(/"/g,'&quot;')+')">'+
+        (on?'✓ ':'')+f+' <b>'+n+'</b></button>';
+    }).join('')+'</div></div>';
+}
 function marcarLote(v){
   /* linha repetida nunca entra; cancelado e fora do funil só marcando um a um */
   lote.forEach(e=>{ e.marcado = v && !e.repetido && !e.cancelado && !e.foraFunil; });
@@ -3106,12 +3199,125 @@ function verPayload(){
 /* =========================================================
    NAVEGAÇÃO E BOOT
    ========================================================= */
+/* ---------- ponte com a Gestão de Tempo ----------
+   Cada operação vira tarefa no dia certo da agenda:
+   montagem e desmontagem no bloco "Operação viva", e o
+   fechamento D-1 na véspera da montagem. ---- */
+function tarefasDoEvento(ev){
+  const eq = ev.equipe || plano(ev).equipe;
+  const hora = s => String(s||'').slice(11,16);
+  const t = [];
+  const marca = (dia2, bloco, texto) => t.push({
+    chave: 'plan:' + ev.id + ':' + bloco + ':' + dia2,
+    dia: dia2, bloco, texto, evento_id: ev.id
+  });
+  diasEntre(ev.mont, fimMont(ev)).forEach((d,i)=>
+    marca(d, 'op', '🔨 Montagem ' + ev.nome + ' — ' + eq + (i===0 && hora(ev.mont) ? ' às ' + hora(ev.mont) : '') +
+      (ev.cidade && ev.cidade!=='—' ? ' · ' + ev.cidade : '')));
+  diasEntre(ev.desm, fimDesm(ev)).forEach((d,i)=>
+    marca(d, 'op', '📤 Desmontagem ' + ev.nome + ' — ' + eq + (i===0 && hora(ev.desm) ? ' às ' + hora(ev.desm) : '')));
+  /* véspera da montagem: conferir carregamento no bloco de fechamento */
+  if(ev.mont){
+    const v = new Date(dia(ev.mont) + 'T12:00'); v.setDate(v.getDate()-1);
+    marca(v.toISOString().slice(0,10), 'fec', '📦 Conferir carregamento de ' + ev.nome + ' (monta amanhã)');
+  }
+  return t;
+}
+async function enviarParaAgenda(id, silencioso){
+  const ev = eventos.find(e=>e.id===id); if(!ev) return;
+  if(!sb || !nuvemOk){ if(!silencioso) toast('Sem conexão com a nuvem — não consegui mandar para a agenda.'); return; }
+  if(evEncerrado(ev)){ if(!silencioso) toast('Evento cancelado ou finalizado não vai para a agenda.'); return; }
+  const linhas = tarefasDoEvento(ev);
+  if(!linhas.length){ if(!silencioso) toast('Defina as datas do evento antes de mandar para a agenda.'); return; }
+  try{
+    const agora = new Date().toISOString();
+    /* refaz as tarefas deste evento: datas mudaram, texto mudou */
+    await sb.from('plan_tarefas').delete().eq('evento_id', ev.id);
+    const r = await sb.from('plan_tarefas').upsert(linhas.map(l=>Object.assign({}, l, {atualizado_em: agora})));
+    if(r.error) throw r.error;
+    ev.agendaEnviada = HOJE;
+    salvar(); if(!silencioso) verEvento(id);
+    toast('📋 ' + linhas.length + ' tarefa(s) enviadas para a Gestão de Tempo (montagem, desmontagem e conferência da véspera).');
+  }catch(e){
+    if(!silencioso) toast('Não consegui gravar na agenda: ' + e.message + '.');
+  }
+}
+/* mantém a agenda em dia sozinha: manda o que falta, corrige o que mudou
+   e apaga o que não existe mais — sem precisar clicar em nada */
+let agendaOcupada = false, agendaFila = null;
+async function sincronizarAgenda(silencioso){
+  if(!sb || !nuvemOk || agendaOcupada) return;
+  agendaOcupada = true;
+  try{
+    const limite = new Date(); limite.setDate(limite.getDate()+30);
+    const ate = limite.toISOString().slice(0,10);
+
+    /* rede de segurança: evento cancelado, finalizado ou sem data tem as
+       tarefas apagadas pelo id do evento, sem depender da leitura abaixo */
+    for(const ev of eventos){
+      if((evEncerrado(ev) || !ev.mont) && ev.agendaEnviada){
+        const dm = await sb.from('plan_tarefas').delete().eq('evento_id', ev.id);
+        if(!dm.error) ev.agendaEnviada = null;
+      }
+    }
+
+    /* o que o quadro diz que deve existir nos próximos 30 dias */
+    const desejado = {};
+    eventos.forEach(ev=>{
+      if(evEncerrado(ev) || !ev.mont) return;
+      tarefasDoEvento(ev).forEach(t=>{ if(t.dia >= HOJE && t.dia <= ate) desejado[t.chave] = t; });
+    });
+
+    /* o que já está lá */
+    const r = await sb.from('plan_tarefas').select('chave,dia,bloco,texto').gte('dia', HOJE).lte('dia', ate);
+    if(r.error) throw r.error;
+    const atual = {}; (r.data||[]).forEach(l=>atual[l.chave] = l);
+
+    const novas = [], sobrando = [];
+    Object.values(desejado).forEach(t=>{
+      const a = atual[t.chave];
+      if(!a || a.texto !== t.texto || a.bloco !== t.bloco) novas.push(t);
+    });
+    Object.keys(atual).forEach(k=>{ if(!desejado[k]) sobrando.push(k); });
+    if(!novas.length && !sobrando.length){
+      if(!silencioso) toast('📋 Agenda já está em dia com o quadro.');
+      return;
+    }
+    const agora = new Date().toISOString();
+    if(sobrando.length){
+      const d = await sb.from('plan_tarefas').delete().in('chave', sobrando);
+      if(d.error) throw d.error;
+    }
+    if(novas.length){
+      const u = await sb.from('plan_tarefas').upsert(novas.map(t=>Object.assign({}, t, {atualizado_em: agora})));
+      if(u.error) throw u.error;
+      novas.forEach(t=>{ const e2 = eventos.find(x=>x.id===t.evento_id); if(e2) e2.agendaEnviada = HOJE; });
+    }
+    if(!silencioso) toast('📋 Agenda atualizada: ' + novas.length + ' tarefa(s) enviada(s), ' + sobrando.length + ' removida(s).');
+  }catch(e){ if(!silencioso) toast('Não consegui atualizar a agenda: ' + e.message); }
+  finally{ agendaOcupada = false; }
+}
+function agendarSync(){ clearTimeout(agendaFila); agendaFila = setTimeout(()=>sincronizarAgenda(true), 2500); }
+
+async function enviarAgendaDaSemana(){
+  if(!sb || !nuvemOk) return toast('Sem conexão com a nuvem.');
+  const fim = new Date(); fim.setDate(fim.getDate()+7);
+  const ate = fim.toISOString().slice(0,10);
+  const alvo = eventos.filter(e=>!evEncerrado(e) && e.mont && diasEquipe(e).some(d=>d>=HOJE && d<=ate));
+  if(!alvo.length) return toast('Nenhuma operação nos próximos 7 dias.');
+  for(const e of alvo){ await enviarParaAgenda(e.id, true); }
+  toast('📋 Agenda atualizada com ' + alvo.length + ' evento(s) dos próximos 7 dias.');
+}
+
 /* ---------- ponte com a Escala de Montadores (Supabase dela) ----------
    Equipe confirmada no evento -> montadores marcados TRABALHOU (T) nos dias
    de montagem e desmontagem, com o nome do evento na observação. ---- */
+/* Se a Escala de Montadores estiver no MESMO projeto novo, deixe como está.
+   Se ela continuar no projeto antigo, troque as duas linhas abaixo pelos
+   dados daquele projeto — é o único lugar que precisa mudar. */
 const ESCALA = {
-  url: 'https://zsiosgfdvjunniqrtukb.supabase.co',
-  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzaW9zZ2Zkdmp1bm5pcXJ0dWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NzQwMjksImV4cCI6MjEwNDM1MDAyOX0.0fgYNWgkFsmz9aWuzX2F7P66g2PBlnEVixa_qh724-g'
+  url: NUVEM.url,
+  key: NUVEM.key
 };
 function escReq(caminho, metodo, corpo){
   return fetch(ESCALA.url + '/rest/v1/' + caminho, {
@@ -3140,8 +3346,25 @@ function casaMontadorEscala(nomePlan, listaEscala){
   }
   return listaEscala.find(x => semAcento(x.nome).includes(n)) || null;
 }
+/* escala automática: todo evento com equipe definida e datas na janela
+   tem o time (líder incluído) marcado como TRABALHOU, sem clique. */
+let escalaRodando = false;
+async function sincronizarEscala(){
+  if(escalaRodando) return;
+  escalaRodando = true;
+  try{
+    const ate = new Date(); ate.setDate(ate.getDate()+30);
+    const limite = ate.toISOString().slice(0,10);
+    const alvo = eventos.filter(e => e.equipe && !evSemNossaEquipe(e) && e.mont &&
+      diasEquipe(e).some(d => d >= HOJE && d <= limite));
+    for(const e of alvo){ await enviarParaEscala(e.id, true); }
+  }catch(x){}
+  finally{ escalaRodando = false; }
+}
+
 async function enviarParaEscala(id, silencioso){
   const ev = eventos.find(e=>e.id===id); if(!ev) return;
+  if(evSemNossaEquipe(ev)){ if(!silencioso) toast('Evento cancelado, finalizado ou totalmente terceirizado — não vai para a escala.'); return; }
   const eq = ev.equipe || plano(ev).equipe;
   /* o líder da equipe trabalha junto: entra na escala com o time */
   const time = montadoresOp(ev, eq);
@@ -3471,6 +3694,8 @@ async function salvar(){
   if(sb && nuvemOk){
     clearTimeout(filaSync);
     filaSync = setTimeout(nuvemGravar, 600); /* agrupa edições seguidas numa gravação só */
+    agendarSync();                            /* e mantém a agenda em dia sozinha */
+    agendarSync();                           /* e mantém a agenda em dia sozinha */
   }
 }
 
@@ -3493,6 +3718,12 @@ async function salvar(){
       }
       marcarSync(true);
       nuvemEscutar();
+      sincronizarAgenda(true);                          /* agenda em dia ao abrir */
+      setInterval(()=>sincronizarAgenda(true), 300000); /* e de 5 em 5 minutos */
+      setTimeout(sincronizarEscala, 4000);              /* escala em dia ao abrir */
+      setInterval(sincronizarEscala, 600000);           /* e de 10 em 10 minutos */
+      sincronizarAgenda();
+      setInterval(sincronizarAgenda, 300000);
       await Store.set('cpl:dados', {eventos, produtores, equipes, motoristas, veiculos, catalogo, CONFIG, APRENDA});
     } else { marcarSync(false, '⚠ só neste aparelho'); }
   }catch(e){
