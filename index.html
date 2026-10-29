@@ -177,8 +177,10 @@ table.prev th{font-size:11px;color:var(--muted);background:#f6f8fc;position:stic
   <section id="a-quadro">
     <div class="bar">
       <input type="search" id="busca" placeholder="🔍 buscar evento, local ou pessoa" oninput="renderQuadro()">
-      <select id="periodo" onchange="renderQuadro()">
+      <select id="periodo" onchange="try{localStorage.setItem('peq:periodo',this.value)}catch(e){};renderQuadro()">
         <option value="60">Próximos 60 dias</option>
+        <option value="7">Próximos 7 dias</option>
+        <option value="15">Próximos 15 dias</option>
         <option value="30">Próximos 30 dias</option>
         <option value="120">Próximos 120 dias</option>
         <option value="todos">Todos</option>
@@ -1003,7 +1005,20 @@ function agruparRepetidos(mostrar){
 }
 
 /* ================= IMPORTAR PLANILHA ================= */
-const CAMPOS_IMP = [['nome','Nome do evento'],['os','OS'],['local','Local / cidade'],['mIni','Montagem — início'],['mFim','Montagem — fim'],['eIni','Evento — início'],['eFim','Evento — fim'],['dIni','Desmontagem — início'],['dFim','Desmontagem — fim'],['equipe','Equipe (opcional)']];
+const CAMPOS_IMP = [['nome','Nome do evento'],['os','OS'],['local','Local / cidade'],['mIni','Montagem — início'],['mFim','Montagem — fim'],['eIni','Evento — início'],['eFim','Evento — fim'],['dIni','Desmontagem — início'],['dFim','Desmontagem — fim'],['equipe','Equipe (opcional)'],['fase','Fase (Pipefy)']];
+/* fases do Pipefy que entram (as outras ficam de fora) */
+const FASES_PADRAO = ['BACKLOG','ALINHAMENTO DE RESPONSÁVEIS','CRIAÇÃO DE LOGÍSTICA','CARD PAI'];
+const normFase = s => semAc(s).replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+const fasesOk = () => (Array.isArray(CFG.fasesImport) && CFG.fasesImport.length ? CFG.fasesImport : FASES_PADRAO);
+function faseEntra(f){
+  const n = normFase(f); if(!n) return false;
+  return fasesOk().some(x=>{ const y = normFase(x); return n === y || n.includes(y); });
+}
+function togFaseImp(f){
+  const L = fasesOk().slice(), i = L.findIndex(x=>normFase(x)===normFase(f));
+  if(i >= 0) L.splice(i, 1); else L.push(f);
+  CFG.fasesImport = L; salvarCfg(); renderImport();
+}
 let IMP = null;   /* {cab:[], linhas:[[]], mapa:{campo:idx}} */
 function abrirImportar(){
   ABERTO = {tipo:'imp'};
@@ -1050,6 +1065,7 @@ function adivinharMapa(cab, linhas){
     if(/montag/.test(s)){ if(fim(s)) M.mFim = M.mFim ?? i; else M.mIni = M.mIni ?? i; return; }
     if(/\bevento\b|realizacao/.test(s) && pareceData(i)){ if(fim(s)) M.eFim = M.eFim ?? i; else M.eIni = M.eIni ?? i; return; }
     if(/^os\b|ordem de servico|n os|numero da os|^n[ºo]? ?os/.test(s)){ M.os = M.os ?? i; return; }
+    if(/^(fase|fase atual|status|etapa|fase do card)\b/.test(s)){ M.fase = M.fase ?? i; return; }
     if(/equipe|encarregado|lider/.test(s)){ M.equipe = M.equipe ?? i; return; }
     if(/local|cidade|endereco|municipio/.test(s)){ M.local = M.local ?? i; return; }
     if(/evento|nome|titulo|cliente|projeto/.test(s) && !pareceData(i)){ M.nome = M.nome ?? i; return; }
@@ -1089,6 +1105,7 @@ function linhaParaEvento(r){
     if(ev[b] && ev[a] && ev[b] < ev[a]) ev[b] = '';
   });
   ev.equipeTxt = String(g('equipe')||'').trim();
+  ev.faseTxt = String(g('fase')||'').trim();
   return ev;
 }
 const chaveEv = ev => baseNome(partesNome(ev.nome).nome) + '|' + (ev.mIni || ev.eIni || ev.dIni || '');
@@ -1101,16 +1118,24 @@ function renderImport(){
     const k = chaveEv(ev);
     const passou = fimEv(ev) < HOJE;
     const junta = ev.nome && (EV.some(x=>mesmoNome(x.nome, ev.nome) && datasPerto(x, ev)) || evs.some(x=>x !== ev && x.nome && mesmoNome(x.nome, ev.nome) && datasPerto(x, ev)));
-    const st = !ev.nome ? 'sem nome' : !(ev.mIni || ev.eIni || ev.dIni) ? 'sem data' : existentes.has(k) ? 'já existe' : passou ? 'já passou' : (junta || vistos.has(k)) ? 'agrupa' : 'novo';
+    const fora = IMP.mapa.fase != null && !faseEntra(ev.faseTxt);
+    const st = !ev.nome ? 'sem nome' : fora ? 'fora da fase' : !(ev.mIni || ev.eIni || ev.dIni) ? 'sem data' : existentes.has(k) ? 'já existe' : passou ? 'já passou' : (junta || vistos.has(k)) ? 'agrupa' : 'novo';
     vistos.add(k);
     return {ev, st, ok: st === 'novo' || st === 'agrupa'};
   });
   const nNovos = IMP.prev.filter(p=>p.ok).length;
   res.innerHTML =
     '<div style="font-size:12.5px;color:var(--muted)">Aba <b>'+esc(IMP.aba)+'</b> · '+IMP.linhas.length+' linha(s). Confira de qual coluna vem cada informação:</div>'+
+    (function(){
+      if(IMP.mapa.fase == null) return '<div class="alert" style="margin-top:8px">A planilha não tem coluna de <b>fase</b> — entram todas as linhas. Se tiver, escolha a coluna em "Fase (Pipefy)" abaixo.</div>';
+      const cont = {}; evs.forEach(e=>{ const f = e.faseTxt || '(sem fase)'; cont[f] = (cont[f]||0) + 1; });
+      return '<div style="margin-top:8px;font-size:12.5px"><b>Fases que entram</b> <span style="color:var(--muted)">— toque para ligar/desligar</span><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+
+        Object.keys(cont).sort((a,b)=>cont[b]-cont[a]).map(f=>{ const on = faseEntra(f);
+          return '<button class="tbtn'+(on?' on':'')+'" style="font-size:11.5px;padding:5px 10px" onclick="togFaseImp(\''+esc(f).replace(/'/g,"\\'")+'\')">'+(on?'✓ ':'')+esc(f)+' <b>'+cont[f]+'</b></button>'; }).join('')+'</div></div>';
+    })()+
     '<div class="mapa">'+CAMPOS_IMP.map(([k, rot])=>'<div><label>'+rot+'</label><select onchange="IMP.mapa[\''+k+'\']=this.value===\'\'?null:+this.value;renderImport()"><option value="">— não tem —</option>'+IMP.cab.map((c,i)=>'<option value="'+i+'" '+(IMP.mapa[k]===i?'selected':'')+'>'+esc(c || 'coluna ' + (i+1))+'</option>').join('')+'</select></div>').join('')+'</div>'+
     '<div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:10px"><table class="prev"><thead><tr><th></th><th>Evento</th><th>🔨 Montagem</th><th>🎪 Evento</th><th>📤 Desmontagem</th><th></th></tr></thead><tbody>'+
-      IMP.prev.map((p,i)=>'<tr style="'+(p.ok?'':'opacity:.55')+'"><td><input type="checkbox" '+(p.ok?'checked':'')+' '+(p.st==='novo'||p.st==='já existe'||p.st==='repetido'||p.st==='já passou'?'':'disabled')+' onchange="IMP.prev['+i+'].ok=this.checked;contarImp()"></td><td><b>'+esc(p.ev.nome||'—')+'</b>'+(p.ev.local?'<br><small style="color:var(--muted)">'+esc(p.ev.local)+'</small>':'')+'</td><td>'+faixa(p.ev.mIni, p.ev.mFim)+'</td><td>'+faixa(p.ev.eIni, p.ev.eFim)+'</td><td>'+faixa(p.ev.dIni, p.ev.dFim)+'</td><td><span class="chip '+(p.st==='novo'?'m':p.st==='agrupa'?'':'warn')+'" title="'+(p.st==='agrupa'?'mesmo nome de outro evento: entra junto com ele':'')+'">'+(p.st==='agrupa'?'🔗 agrupa':p.st)+'</span></td></tr>').join('')+
+      IMP.prev.map((p,i)=>'<tr style="'+(p.ok?'':'opacity:.55')+'"><td><input type="checkbox" '+(p.ok?'checked':'')+' '+(p.st==='novo'||p.st==='já existe'||p.st==='agrupa'||p.st==='já passou'?'':'disabled')+' onchange="IMP.prev['+i+'].ok=this.checked;contarImp()"></td><td><b>'+esc(p.ev.nome||'—')+'</b>'+(p.ev.local?'<br><small style="color:var(--muted)">'+esc(p.ev.local)+'</small>':'')+(p.ev.faseTxt?'<br><small style="color:var(--ink2)">'+esc(p.ev.faseTxt)+'</small>':'')+'</td><td>'+faixa(p.ev.mIni, p.ev.mFim)+'</td><td>'+faixa(p.ev.eIni, p.ev.eFim)+'</td><td>'+faixa(p.ev.dIni, p.ev.dFim)+'</td><td><span class="chip '+(p.st==='novo'?'m':p.st==='agrupa'?'':'warn')+'" title="'+(p.st==='agrupa'?'mesmo nome de outro evento: entra junto com ele':'')+'">'+(p.st==='agrupa'?'🔗 agrupa':p.st)+'</span></td></tr>').join('')+
     '</tbody></table></div>'+
     '<div style="display:flex;gap:8px;align-items:center;margin-top:12px"><span id="imp-n" style="font-size:13px;font-weight:700">'+nNovos+' evento(s) marcado(s)</span><span class="sp" style="flex:1"></span><button class="mini pri" onclick="gravarImport()">💾 Gravar</button></div>';
 }
@@ -1125,7 +1150,7 @@ function gravarImport(){
     /* equipe escrita na planilha: casa com o nome de uma equipe cadastrada */
     if(ev.equipeTxt && /terceir/.test(semAc(ev.equipeTxt))){ ev.terc = /tudo|total|transporte|logistica/.test(semAc(ev.equipeTxt)) ? 'tudo' : 'equipe'; ev.tercEmpresa = ev.equipeTxt.replace(/.*terceiri[sz]ad[oa]s?\s*[-–:]?\s*/i,'').trim(); }
     else if(ev.equipeTxt){ const e = CFG.equipes.find(x=>semAc(ev.equipeTxt).includes(semAc(x.nome))); if(e){ ev.eqM = [e.nome]; ev.pesM = pessoasDaEquipe(e); } }
-    delete ev.equipeTxt;
+    delete ev.equipeTxt; if(ev.faseTxt) ev.fasePipefy = ev.faseTxt; delete ev.faseTxt;
     EV.push(ev); salvarEv(ev, true); n++;
   });
   const ag = agruparRepetidos(false);
@@ -1264,6 +1289,7 @@ function copiarSQL(){
   }catch(e){}
   let aba = 'quadro'; try{ aba = localStorage.getItem('peq:aba') || 'quadro'; }catch(e){}
   garantirFrota();
+  try{ const p = localStorage.getItem('peq:periodo'); const s = document.getElementById('periodo'); if(p && s && [...s.options].some(o=>o.value===p)) s.value = p; }catch(e){}
   irAba(['quadro','cal','eq','frota'].includes(aba) ? aba : 'quadro');
   pintarSync();
   carregarNuvem();
