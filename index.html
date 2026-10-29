@@ -1008,7 +1008,7 @@ function agruparRepetidos(mostrar){
 const CAMPOS_IMP = [['nome','Nome do evento'],['os','OS'],['local','Local / cidade'],['mIni','Montagem — início'],['mFim','Montagem — fim'],['eIni','Evento — início'],['eFim','Evento — fim'],['dIni','Desmontagem — início'],['dFim','Desmontagem — fim'],['equipe','Equipe (opcional)'],['fase','Fase (Pipefy)']];
 /* fases do Pipefy que entram (as outras ficam de fora) */
 const FASES_PADRAO = ['BACKLOG','ALINHAMENTO DE RESPONSÁVEIS','CRIAÇÃO DE LOGÍSTICA','CARD PAI'];
-const normFase = s => semAc(s).replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+const normFase = s => semAc(s).replace(/[^a-z0-9 ]+/g,' ').split(/\s+/).filter(w=>w && !/^(de|do|dos|da|das|e|a|o|em)$/.test(w)).join(' ');
 const fasesOk = () => (Array.isArray(CFG.fasesImport) && CFG.fasesImport.length ? CFG.fasesImport : FASES_PADRAO);
 function faseEntra(f){
   const n = normFase(f); if(!n) return false;
@@ -1059,6 +1059,7 @@ function adivinharMapa(cab, linhas){
   const M = {}, N = cab.map(c=>semAc(c).replace(/[^a-z0-9]+/g,' ').trim());
   const fim = s => /\b(fim|final|termino|ate|encerramento)\b/.test(s);
   const pareceData = i => { const vals = linhas.slice(0, 20).map(r=>r[i]).filter(v=>String(v).trim()!==''); return vals.length && vals.filter(v=>!!lerData(v)).length >= vals.length * 0.6; };
+  const soNumero = i => { const vals = linhas.slice(0, 20).map(r=>r[i]).filter(v=>String(v).trim()!==''); return vals.length && vals.filter(v=>/^\s*[\d.,]+\s*$/.test(String(v))).length >= vals.length * 0.6; };
   N.forEach((s, i)=>{
     if(!s) return;
     if(/desmont/.test(s)){ if(fim(s)) M.dFim = M.dFim ?? i; else M.dIni = M.dIni ?? i; return; }
@@ -1067,7 +1068,7 @@ function adivinharMapa(cab, linhas){
     if(/^os\b|ordem de servico|n os|numero da os|^n[ºo]? ?os/.test(s)){ M.os = M.os ?? i; return; }
     if(/^(fase|fase atual|status|etapa|fase do card)\b/.test(s)){ M.fase = M.fase ?? i; return; }
     if(/equipe|encarregado|lider/.test(s)){ M.equipe = M.equipe ?? i; return; }
-    if(/local|cidade|endereco|municipio/.test(s)){ M.local = M.local ?? i; return; }
+    if(/local|cidade|endereco|municipio/.test(s)){ if(!soNumero(i)) M.local = M.local ?? i; return; }
     if(/evento|nome|titulo|cliente|projeto/.test(s) && !pareceData(i)){ M.nome = M.nome ?? i; return; }
   });
   if(M.nome == null){ const i = N.findIndex((s,k)=>s && !pareceData(k)); if(i >= 0) M.nome = i; }
@@ -1105,7 +1106,7 @@ function linhaParaEvento(r){
     if(ev[b] && ev[a] && ev[b] < ev[a]) ev[b] = '';
   });
   ev.equipeTxt = String(g('equipe')||'').trim();
-  ev.faseTxt = String(g('fase')||'').trim();
+  ev.faseTxt = String(g('fase')||'').replace(/^[^\p{L}\p{N}]+/u,'').trim();
   return ev;
 }
 const chaveEv = ev => baseNome(partesNome(ev.nome).nome) + '|' + (ev.mIni || ev.eIni || ev.dIni || '');
