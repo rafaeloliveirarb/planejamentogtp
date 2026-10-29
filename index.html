@@ -352,7 +352,8 @@ function faseEv(ev){
   if(diasM(ev).includes(HOJE)) return 'mont';
   if(ev.dIni && HOJE > (ev.eFim || ev.eIni || '') && HOJE < ev.dIni && ehData(ev.eIni)) return 'evt';   /* entre o evento e a desmontagem */
   if(ehData(ev.mIni) && HOJE > (ev.mFim || ev.mIni) && ehData(ev.eIni) && HOJE < ev.eIni) return 'mont';
-  const faltaM = !(ev.pesM||[]).length, faltaD = ehData(ev.dIni) && !pesD(ev).length;
+  if(ev.terc === 'tudo') return 'ok';
+  const faltaM = ev.terc !== 'equipe' && !(ev.pesM||[]).length, faltaD = ev.terc !== 'equipe' && ehData(ev.dIni) && !pesD(ev).length;
   const faltaC = !camM(ev).length || (ehData(ev.dIni) && ev.camDIgual === false && !camD(ev).length);
   return (faltaM || faltaD || faltaC) ? 'plan' : 'ok';
 }
@@ -393,11 +394,11 @@ function renderQuadro(){
   let L = EV.slice();
   if(per === 'passados') L = L.filter(ev=>faseEv(ev)==='fim');
   else if(per !== 'todos'){ const lim = somaDia(HOJE, +per); L = L.filter(ev=>faseEv(ev)!=='fim' && inicioEv(ev) <= lim); }
-  if(q) L = L.filter(ev=>semAc([ev.nome, ev.os, ev.local, ...(ev.pesM||[]), ...pesD(ev), ...['M','D'].flatMap(F=>camF(ev,F).flatMap(c=>[c.mot, c.placa, c.nome, rotCam(camObj(c.v))]))].join(' ')).includes(q));
+  if(q) L = L.filter(ev=>semAc([ev.nome, ev.os, ev.local, ev.terc ? 'terceirizado terceirizada ' + (ev.tercEmpresa||'') : '', ...(ev.pesM||[]), ...pesD(ev), ...['M','D'].flatMap(F=>camF(ev,F).flatMap(c=>[c.mot, c.placa, c.nome, rotCam(camObj(c.v))]))].join(' ')).includes(q));
   L.sort((a,b)=>inicioEv(a).localeCompare(inicioEv(b)) || String(a.nome).localeCompare(String(b.nome)));
   const fases = per === 'passados' ? FASES.filter(f=>f[0]==='fim') : FASES.filter(f=>f[0]!=='fim' || per==='todos');
   const semEq = L.filter(ev=>faseEv(ev)==='plan').length;
-  document.getElementById('q-resumo').innerHTML = L.length + ' evento(s)' + (semEq ? ' · <b style="color:#a35c00">' + semEq + ' sem equipe</b>' : '');
+  document.getElementById('q-resumo').innerHTML = L.length + ' evento(s)' + (semEq ? ' · <b style="color:#a35c00">' + semEq + ' a planejar</b>' : '');
   document.getElementById('kanban').innerHTML = fases.map(([k, rot, cor])=>{
     const C = L.filter(ev=>faseEv(ev)===k);
     return '<div class="col"><h3><span style="width:9px;height:9px;border-radius:50%;background:'+cor+'"></span>'+rot+'<b>'+C.length+'</b></h3>'+
@@ -418,9 +419,10 @@ function cardHtml(ev){
       (temD ? '<span>📤 <b>'+faixa(ev.dIni, ev.dFim)+'</b></span>' : '')+
     '</div>'+
     '<div class="eqs">'+
+      (ev.terc ? '<span class="chip" style="background:#efe7fb;color:#5b3a9a">🤝 '+(ev.terc==='tudo'?'Tudo terceirizado':'Equipe terceirizada')+(ev.tercEmpresa?' · '+esc(ev.tercEmpresa):'')+'</span>' :
       ((ev.pesM||[]).length ? '<span style="font-size:11px;color:var(--muted);font-weight:700">🔨</span>' + eqTxt(ev.eqM||[], ev.pesM||[], 'm') : '<span class="chip warn">🔨 sem equipe</span>')+
-      (temD ? (pesD(ev).length ? (ev.desmIgual === false ? '<span style="font-size:11px;color:var(--muted);font-weight:700">📤</span>' + eqTxt(eqD(ev), pesD(ev), 'd') : '') : '<span class="chip warn">📤 sem equipe</span>') : '')+
-      (camM(ev).length ? '<span style="font-size:11px;color:var(--muted);font-weight:700">🚚</span>' + camM(ev).map(c=>'<span class="chip">'+esc(c.v==='frete' ? 'frete' + (c.placa?' '+c.placa:'') : ((camObj(c.v)||{}).placa||'?'))+'</span>').join('') : '<span class="chip warn">🚚 sem caminhão</span>')+
+      (temD ? (pesD(ev).length ? (ev.desmIgual === false ? '<span style="font-size:11px;color:var(--muted);font-weight:700">📤</span>' + eqTxt(eqD(ev), pesD(ev), 'd') : '') : '<span class="chip warn">📤 sem equipe</span>') : ''))+
+      (ev.terc === 'tudo' ? '' : camM(ev).length ? '<span style="font-size:11px;color:var(--muted);font-weight:700">🚚</span>' + camM(ev).map(c=>'<span class="chip">'+esc(c.v==='frete' ? 'frete' + (c.placa?' '+c.placa:'') : ((camObj(c.v)||{}).placa||'?'))+'</span>').join('') : '<span class="chip warn">🚚 sem caminhão</span>')+
       (conflitosFrotaEv(ev).length ? '<span class="chip bad">⚠ frota em dois lugares</span>' : '')+
       (cf.length ? '<span class="chip bad" title="'+esc(cf.map(c=>c.nome+' também em '+c.outroNome+' ('+dm(c.dia)+')').join('; '))+'">⚠ '+cf.length+' em dois lugares</span>' : '')+
       (ev.plantao ? '<span class="chip" style="background:var(--pbg);color:var(--p)">plantão</span>' : '')+
@@ -451,13 +453,20 @@ function abrirEvento(id, manterScroll){
       '<label class="f"><i>OS</i><input value="'+esc(ev.os)+'" placeholder="opcional" onchange="setCampo(\''+id+'\',\'os\',this.value.trim())"></label></div>'+
       '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.5px;margin:4px 0 6px">DATAS <span style="font-weight:500;letter-spacing:0">— de / até (até vazio = um dia só)</span></div>'+
       linhaData('🔨 Montagem','mIni','mFim')+linhaData('🎪 Evento','eIni','eFim')+linhaData('📤 Desmontagem','dIni','dFim')+
+      '<div class="sec"><h4>🤝 Quem faz a montagem e a desmontagem?</h4>'+
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">'+[['','🏠 Nossa equipe'],['equipe','🤝 Equipe terceirizada'],['tudo','🤝 Tudo terceirizado']].map(([k,rot])=>
+          '<button class="tbtn'+((ev.terc||'')===k?' on':'')+'" onclick="setTerc(\''+id+'\',\''+k+'\')">'+rot+'</button>').join('')+'</div>'+
+        (ev.terc ? '<label class="f" style="margin-top:10px"><i>Empresa terceirizada</i><input value="'+esc(ev.tercEmpresa||'')+'" placeholder="nome da empresa (opcional)" onchange="setCampo(\''+id+'\',\'tercEmpresa\',this.value.trim())"></label>'+
+          '<div style="font-size:12px;color:var(--muted)">'+(ev.terc==='tudo' ? 'Equipe e transporte por conta do terceiro — o evento não usa nossas equipes nem nossos caminhões.' : 'A equipe é do terceiro — nossas equipes ficam livres. Os nossos caminhões continuam abaixo, se formos levar o material.')+'</div>' : '')+
+      '</div>'+
+      (ev.terc ? '' :
       blocoEquipe(ev, 'M')+
       '<div class="sec"><h4>📤 Equipe da desmontagem</h4>'+
         '<label class="tog"><input type="checkbox" '+(ev.desmIgual!==false?'checked':'')+' onchange="setDesmIgual(\''+id+'\',this.checked)"> Mesma equipe da montagem</label>'+
         (ev.desmIgual===false ? blocoEquipe(ev, 'D', true) : '')+
       '</div>'+
-      '<div class="sec"><label class="tog"><input type="checkbox" '+(ev.plantao?'checked':'')+' onchange="setCampo(\''+id+'\',\'plantao\',this.checked)"><span>🎪 A equipe da montagem fica de <b>plantão</b> nos dias do evento <small style="color:var(--muted)">(conta como dia trabalhado)</small></span></label></div>'+
-      blocoFrotaEv(ev, 'M')+(ehData(ev.dIni) ? blocoFrotaEv(ev, 'D') : '')+
+      '<div class="sec"><label class="tog"><input type="checkbox" '+(ev.plantao?'checked':'')+' onchange="setCampo(\''+id+'\',\'plantao\',this.checked)"><span>🎪 A equipe da montagem fica de <b>plantão</b> nos dias do evento <small style="color:var(--muted)">(conta como dia trabalhado)</small></span></label></div>')+
+      (ev.terc === 'tudo' ? '' : blocoFrotaEv(ev, 'M')+(ehData(ev.dIni) ? blocoFrotaEv(ev, 'D') : ''))+
       (function(){ const cff = conflitosFrotaEv(ev); return cff.length ? '<div class="alert red"><b>⚠ Frota em dois lugares:</b><br>'+cff.map(c=>'<b>'+esc(c.txt)+'</b> também está em <a href="#" onclick="event.preventDefault();abrirEvento(\''+c.outro.id+'\')">'+esc(c.outro.nome)+'</a> em '+dmy(c.dia)).join('<br>')+'</div>' : ''; })()+
       (cf.length ? '<div class="alert red"><b>⚠ Em dois lugares:</b><br>'+cf.map(c=>'<b>'+esc(c.nome)+'</b> também está em <a href="#" onclick="event.preventDefault();abrirEvento(\''+c.outro+'\')">'+esc(c.outroNome)+'</a> em '+dmy(c.dia)).join('<br>')+'</div>' : '')+
       '<label class="f" style="margin-top:12px"><i>Observação</i><textarea rows="2" placeholder="opcional" onchange="setCampo(\''+id+'\',\'obs\',this.value)">'+esc(ev.obs)+'</textarea></label>'+
@@ -501,6 +510,19 @@ function setCampo(id, k, v){
   if(k !== 'obs' && k !== 'nome' && k !== 'local' && k !== 'os') abrirEvento(id, true);
   else if(k === 'nome'){ const h = document.querySelector('#modal header h2'); if(h && h.firstChild) h.firstChild.textContent = v || 'Novo evento'; }
   renderFundo();
+}
+function setTerc(id, k){
+  const ev = EV.find(e=>e.id===id); if(!ev) return;
+  if((ev.terc||'') === k) return;
+  const temGente = (ev.pesM||[]).length || (ev.pesD||[]).length;
+  const temCam = (ev.camM||[]).length || (ev.camD||[]).length;
+  if(k && temGente && !confirm('Este evento já tem pessoas da nossa equipe. Passar para terceirizado tira essas pessoas do evento. Continuar?')) return;
+  if(k === 'tudo' && temCam && !confirm('Tudo terceirizado também tira os nossos caminhões deste evento. Continuar?')) return;
+  if(k){ ev.eqM = []; ev.pesM = []; ev.eqD = []; ev.pesD = []; ev.desmIgual = true; ev.plantao = false; }
+  if(k === 'tudo'){ ev.camM = []; ev.camD = []; ev.camDIgual = true; }
+  ev.terc = k || '';
+  salvarEv(ev); abrirEvento(id, true); renderFundo();
+  toast(k === 'tudo' ? '🤝 Tudo terceirizado — sem nossa equipe e sem nossos caminhões.' : k === 'equipe' ? '🤝 Equipe terceirizada — nossas equipes ficam livres nessas datas.' : '🏠 Volta a ser com a nossa equipe — escolha a equipe.');
 }
 function setDesmIgual(id, on){
   const ev = EV.find(e=>e.id===id); if(!ev) return;
@@ -1025,7 +1047,8 @@ function gravarImport(){
   L.forEach(p=>{
     const ev = Object.assign({id:novoId(), eqM:[], pesM:[], eqD:[], pesD:[], desmIgual:true, plantao:false, obs:'', criado:Date.now()}, p.ev);
     /* equipe escrita na planilha: casa com o nome de uma equipe cadastrada */
-    if(ev.equipeTxt){ const e = CFG.equipes.find(x=>semAc(ev.equipeTxt).includes(semAc(x.nome))); if(e){ ev.eqM = [e.nome]; ev.pesM = pessoasDaEquipe(e); } }
+    if(ev.equipeTxt && /terceir/.test(semAc(ev.equipeTxt))){ ev.terc = /tudo|total|transporte|logistica/.test(semAc(ev.equipeTxt)) ? 'tudo' : 'equipe'; ev.tercEmpresa = ev.equipeTxt.replace(/.*terceiri[sz]ad[oa]s?\s*[-–:]?\s*/i,'').trim(); }
+    else if(ev.equipeTxt){ const e = CFG.equipes.find(x=>semAc(ev.equipeTxt).includes(semAc(x.nome))); if(e){ ev.eqM = [e.nome]; ev.pesM = pessoasDaEquipe(e); } }
     delete ev.equipeTxt;
     EV.push(ev); salvarEv(ev, true); n++;
   });
