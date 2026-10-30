@@ -261,6 +261,7 @@ const EQUIPES_PADRAO = [
 let EV = [];                                   /* eventos */
 let CFG = {equipes: JSON.parse(JSON.stringify(EQUIPES_PADRAO)), volantes:['Pedro Henrique']};
 let SUJOS = new Set(), APAGADOS = new Set(), CFG_SUJO = false;
+let CENT_SUJOS = new Set(), CENT_APAGAR = new Map();   /* o que ainda tem que ir para a Central de Planejamento */
 let sb = null, NUVEM_OK = false, ERRO_NUVEM = null, ENVIANDO = false, DE_NOVO = false;
 let ABERTO = null;                             /* evento aberto no modal */
 let CAL_MES = null;
@@ -284,7 +285,7 @@ const SEM = ['dom','seg','ter','qua','qui','sex','sáb'];
 const MESES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
 const dm = s => ehData(s) ? s.slice(8) + '/' + s.slice(5,7) : '';
 const dmy = s => ehData(s) ? s.slice(8) + '/' + s.slice(5,7) + '/' + s.slice(0,4) : '';
-const faixaManut = ev => !ehData(ev.mIni) ? '—' : dm(ev.mIni) + (ev.hIni ? ' ' + ev.hIni : '') + ((ev.hFim || (ehData(ev.mFim) && ev.mFim !== ev.mIni)) ? ' → ' + dm(ev.mFim || ev.mIni) + (ev.hFim ? ' ' + ev.hFim : '') : '');
+const faixaManut = ev => !ehData(ev.mIni) ? '—' : dm(ev.mIni) + (ev.hIni ? ' ' + ev.hIni : '') + ((ev.hFim || (ehData(ev.mFim) && ev.mFim !== ev.mIni)) ? ' → ' + ((ev.mFim || ev.mIni) === ev.mIni && ev.hFim ? ev.hFim : dm(ev.mFim || ev.mIni) + (ev.hFim ? ' ' + ev.hFim : '')) : '');
 const manutsDe = id => EV.filter(x=>x.tipo === 'manut' && x.paiId === id).sort((a,b)=>((a.mIni||'')+(a.hIni||'')).localeCompare((b.mIni||'')+(b.hIni||'')));
 let CRIA_MANUT = null;                          /* evento com o formulário de nova manutenção aberto */
 const faixa = (a, b) => !ehData(a) ? '—' : (ehData(b) && b !== a ? dm(a) + ' a ' + dm(b) : dm(a));
@@ -310,6 +311,13 @@ function todasPessoas(){
 const pessoasDaEquipe = e => [e.lider, ...(e.membros||[])].filter(Boolean).filter((x,i,a)=>a.indexOf(x)===i);
 const equipeDe = nome => { const p = todasPessoas().find(x=>x.nome===nome); return p ? p.equipe : null; };
 const ehLider = nome => CFG.equipes.some(e=>e.lider===nome);
+/* etiquetas da equipe no card: equipe com o líder junto = nome da equipe; sem o líder = nome de cada montador */
+const rotulosEquipe = (eqs, pes) => {
+  const coberto = new Set(), out = [];
+  (eqs||[]).forEach(n=>{ const e = CFG.equipes.find(x=>x.nome===n); if(e && e.lider && (pes||[]).includes(e.lider)){ out.push({t:n, eq:true}); pessoasDaEquipe(e).forEach(p=>coberto.add(p)); } });
+  (pes||[]).filter(p=>!coberto.has(p)).forEach(p=>out.push({t:p}));
+  return out;
+};
 
 /* ================= EVENTO: DIAS DE CADA FASE ================= */
 const diasM = ev => diasEntre(ev.mIni, ev.mFim);
@@ -373,10 +381,10 @@ function faseEv(ev){
 const FASES = [
   ['plan','⚠ A PLANEJAR','#e08a1e'],
   ['ok','✅ PLANEJADO','#0f8a4d'],
-  ['mont','🔨 MONTANDO','#1c5fb8'],
-  ['evt','🎪 EM EVENTO','#6b4fb5'],
-  ['desm','📤 DESMONTANDO','#c0392b'],
   ['manut','🔧 EM MANUTENÇÃO','#0f8a8a'],
+  ['mont','🔨 MONTANDO','#1c5fb8'],
+  ['desm','📤 DESMONTANDO','#c0392b'],
+  ['evt','🎪 EM EVENTO','#6b4fb5'],
   ['fim','✔ CONCLUÍDO','#7a839e']
 ];
 const inicioEv = ev => [ev.mIni, ev.eIni, ev.dIni].find(ehData) || '9999';
@@ -422,7 +430,7 @@ function renderQuadro(){
 function cardHtml(ev){
   const f = faseEv(ev), cor = (FASES.find(x=>x[0]===f)||[])[2] || '#1c4fa0';
   const cf = conflitosEv(ev);
-  const eqTxt = (eqs, pes, cls) => eqs.length ? eqs.map(e=>'<span class="chip '+cls+'">'+esc(e)+'</span>').join('') : (pes.length ? '<span class="chip '+cls+'">'+pes.length+' pessoa(s)</span>' : '');
+  const eqTxt = (eqs, pes, cls) => rotulosEquipe(eqs, pes).map(r=>'<span class="chip '+cls+'"'+(r.eq?'':' style="font-weight:600"')+'>'+(r.eq?'👷 ':'')+esc(r.t)+'</span>').join('');
   const temD = ehData(ev.dIni);
   return '<div class="card" style="border-left-color:'+cor+'" onclick="abrirEvento(\''+ev.id+'\')">'+
     (ev.tipo === 'manut' ? '<div style="font-size:10.5px;font-weight:800;color:#0f8a8a;letter-spacing:.6px">🔧 MANUTENÇÃO</div>' : '')+
@@ -497,7 +505,9 @@ function abrirEvento(id, manterScroll){
       (cf.length ? '<div class="alert red"><b>⚠ Em dois lugares:</b><br>'+cf.map(c=>'<b>'+esc(c.nome)+'</b> também está em <a href="#" onclick="event.preventDefault();abrirEvento(\''+c.outro+'\')">'+esc(c.outroNome)+'</a> em '+dmy(c.dia)).join('<br>')+'</div>' : '')+
       '<label class="f" style="margin-top:12px"><i>Observação</i><textarea rows="2" placeholder="opcional" onchange="setCampo(\''+id+'\',\'obs\',this.value)">'+esc(ev.obs)+'</textarea></label>'+
     '</div>'+
-    '<div class="mf"><button class="mini danger" onclick="excluirEvento(\''+id+'\')">🗑 Excluir</button><button class="mini pri" onclick="fecharModal()">Pronto</button></div>';
+    '<div class="mf"><button class="mini danger" onclick="excluirEvento(\''+id+'\')">🗑 Excluir</button>'+
+      '<span style="flex:1;font-size:11.5px;color:var(--muted);text-align:center">'+(ev.centralId ? '🔗 ligado à Central de Planejamento' : '')+'</span>'+
+      '<button class="mini pri" onclick="fecharModal()">Pronto</button></div>';
   ov.classList.add('on');
   ov.scrollTop = st;
 }
@@ -507,7 +517,7 @@ function blocoManutEv(ev){
     return '<div onclick="abrirEvento(\''+m.id+'\')" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);border-left:4px solid '+(F[2]||'#0f8a8a')+';border-radius:10px;margin-bottom:6px;cursor:pointer;background:#fff">'+
       '<b style="font-size:13px">🔧 '+faixaManut(m)+'</b>'+
       '<span style="font-size:11.5px;font-weight:700;color:'+(F[2]||'#555')+'">'+(F[1]||'')+'</span>'+
-      '<span style="font-size:12px;color:var(--muted);flex:1;text-align:right">'+(m.terc ? '🤝 terceirizado' : (m.pesM||[]).length ? esc((m.eqM||[]).join(', ') || (m.pesM.length + ' pessoa(s)')) : 'sem equipe')+' ›</span></div>'; }).join('');
+      '<span style="font-size:12px;color:var(--muted);flex:1;text-align:right">'+(m.terc ? '🤝 terceirizado' : (m.pesM||[]).length ? esc(rotulosEquipe(m.eqM, m.pesM).map(r=>r.t).join(', ')) : 'sem equipe')+' ›</span></div>'; }).join('');
   const form = CRIA_MANUT === id ?
     '<div style="border:1.5px dashed #0f8a8a;border-radius:12px;padding:10px;background:#f2fafa">'+
       '<div class="datas-ed"><b>▶ Início</b><input type="date" id="cm-di"><input type="time" id="cm-hi" value="08:00"></div>'+
@@ -630,7 +640,9 @@ function excluirEvento(id){
   const i = EV.findIndex(e=>e.id===id); if(i < 0) return;
   const ev = EV[i];
   if(!confirm('Excluir "' + (ev.nome || 'evento sem nome') + '"?')) return;
-  EV.splice(i, 1); apagarEv(id);
+  EV.splice(i, 1);
+  if(ev.centralId && ev.centralCriado) CENT_APAGAR.set(ev.centralId, ev.id);   /* card que nós criamos na Central sai junto */
+  CENT_SUJOS.delete(id); apagarEv(id);
   fecharModal(); renderTudo();
   toast('🗑 Evento excluído.', 'Desfazer', ()=>{ EV.splice(i, 0, ev); APAGADOS.delete(id); salvarEv(ev, true); renderTudo(); });
 }
@@ -1225,12 +1237,13 @@ function gravarImport(){
 
 /* ================= GUARDAR (aparelho + nuvem) ================= */
 function guardarLocal(){
-  try{ localStorage.setItem(LS, JSON.stringify({EV, CFG, sujos:[...SUJOS], apagados:[...APAGADOS], cfgSujo:CFG_SUJO})); }catch(e){}
+  try{ localStorage.setItem(LS, JSON.stringify({EV, CFG, sujos:[...SUJOS], apagados:[...APAGADOS], cfgSujo:CFG_SUJO, centSujos:[...CENT_SUJOS], centApagar:[...CENT_APAGAR]})); }catch(e){}
 }
 function salvarEv(ev, novo){
   ev.atual = Date.now();
   SUJOS.add(ev.id); APAGADOS.delete(ev.id);
-  sujar(); guardarLocal(); agendarEnvio();
+  CENT_SUJOS.add(ev.id); CENT_APAGAR.forEach((pid, cid)=>{ if(pid === ev.id) CENT_APAGAR.delete(cid); });
+  sujar(); guardarLocal(); agendarEnvio(); agendarCentral();
 }
 function apagarEv(id){ SUJOS.delete(id); APAGADOS.add(id); sujar(); guardarLocal(); agendarEnvio(); }
 function salvarCfg(){ CFG_SUJO = true; sujar(); guardarLocal(); agendarEnvio(); }
@@ -1299,6 +1312,7 @@ async function carregarNuvem(){
     guardarLocal(); renderTudo(); pintarSync();
     escutar();
     if(pendentes()) enviar();
+    centralPrimeiraVez(); agendarCentral();
   }catch(e){ erroNuvem(e); }
 }
 let ESCUTANDO = false;
@@ -1336,6 +1350,7 @@ function abrirNuvem(){
     (NUVEM_OK && !E ? '<div class="alert green">✅ Conectado — tudo que você muda aparece nos outros aparelhos.'+(n?' ('+n+' enviando…)':'')+'</div>'
       : E && E.tabela ? '<div class="alert">Falta criar as tabelas do Planejamento de Equipes no Supabase (só uma vez). Copie o SQL abaixo e rode no Supabase em <b>SQL Editor → New query → Run</b>. Enquanto isso, tudo fica guardado neste aparelho.</div>'
       : '<div class="alert">Sem conexão com a nuvem agora — tudo fica guardado neste aparelho e sobe sozinho quando voltar.'+(E?'<br><small>'+esc(E.msg)+'</small>':'')+'</div>')+
+    blocoCentralNuvem()+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="mini pri" onclick="carregarNuvem().then(()=>abrirNuvem())">🔄 Tentar de novo</button><button class="mini" onclick="copiarSQL()">📋 Copiar SQL das tabelas</button></div>'+
     '</div><div class="mf"><span style="font-size:12px;color:var(--muted)">'+n+' mudança(s) só neste aparelho</span><button class="mini pri" onclick="fecharModal()">Fechar</button></div>';
   document.getElementById('ov').classList.add('on');
@@ -1345,11 +1360,221 @@ function copiarSQL(){
   catch(e){ prompt('Copie o SQL:', SQL_TABELAS); }
 }
 
+/* ================= LIGAÇÃO COM A CENTRAL DE PLANEJAMENTO =================
+   Tudo que muda aqui vai para a Central (tabela plan_eventos): equipe, terceirizado, caminhões, datas e manutenções.
+   O Planejamento de Equipes manda: o que está preenchido aqui substitui o que está lá.
+   O que está vazio aqui não apaga nada lá. Evento que não existe na Central é criado (se tiver equipe, caminhão ou for manutenção). */
+const C_EV = 'plan_eventos', C_CFG = 'plan_config', C_TERC = 'Equipe terceirizada';
+const CENT = {enviando:false, deNovo:false, ultimo:null, erro:null, avisos:[], avisosEv:{}, criados:0, atualizados:0};
+let T_CENT = null;
+function agendarCentral(){ clearTimeout(T_CENT); T_CENT = setTimeout(enviarCentral, 1500); }
+const placaN = s => String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const osN = s => String(s||'').replace(/\D/g,'');
+const diaC = s => String(s||'').slice(0,10);
+const temPlano = ev => ev.tipo === 'manut' || !!ev.terc || (ev.pesM||[]).length > 0 || camM(ev).length > 0;
+const podeIrCentral = ev => !!(ev && String(ev.nome||'').trim() && [ev.mIni, ev.eIni, ev.dIni].some(ehData));
+function centralPrimeiraVez(){
+  /* na primeira vez neste aparelho, manda o que já está planejado (de hoje em diante) */
+  let ja = null; try{ ja = localStorage.getItem('peq:central1'); }catch(e){}
+  if(ja) return;
+  EV.forEach(ev=>{ if(podeIrCentral(ev) && temPlano(ev) && fimEv(ev) >= HOJE) CENT_SUJOS.add(ev.id); });
+  try{ localStorage.setItem('peq:central1', new Date().toISOString()); }catch(e){}
+  guardarLocal();
+}
+/* quem vai, no jeito da Central: equipe = nome do líder (conta como trabalhando); montOp = o resto (null = time padrão da equipe) */
+function equipeCentral(eqs, pes, cEq){
+  pes = (pes||[]).filter(Boolean);
+  if(!pes.length) return null;
+  const nomes = (cEq||[]).map(e=>e.nome);
+  let lider = (eqs||[]).find(n=>nomes.includes(n) && pes.includes(n)) || pes.find(n=>nomes.includes(n)) || pes[0];
+  const resto = pes.filter(n=>n !== lider);
+  const padrao = ((cEq||[]).find(e=>e.nome===lider)||{}).membros || [];
+  const igual = padrao.length === resto.length && padrao.every(n=>resto.includes(n));
+  return {equipe:lider, montOp: igual ? null : resto};
+}
+function comHora(velho, novoDia, hora){
+  if(!ehData(novoDia)) return velho || null;
+  if(hora) return novoDia + 'T' + hora;
+  const v = String(velho||'');
+  return v.length > 10 ? novoDia + v.slice(10) : novoDia;   /* mantém a hora que já estava lá */
+}
+/* caminhões de uma fase → {veiculos, escala, fretes, fica, faltam} */
+function frotaCentral(ev, F, cVe){
+  const L = camF(ev, F), out = {veiculos:[], escala:[], fretes:[], fica:{}, faltam:[]};
+  const ini = F === 'M' ? ev.mIni : ev.dIni;
+  L.forEach(c=>{
+    if(c.v === 'frete'){ out.fretes.push({emp: c.nome || 'Frete', placa: c.placa || null, fase: F==='M' ? 'mont' : 'desm'}); return; }
+    const o = camObj(c.v); if(!o) return;
+    const v = (cVe||[]).find(x=>placaN(x.placa) === placaN(o.placa));
+    if(!v){ out.faltam.push(o.placa); return; }
+    const i = out.veiculos.length;
+    out.veiculos.push(v.id);
+    out.escala.push({i, v:v.id, motorista: c.mot || o.mot || null, dia: ehData(c.dia) && c.dia !== ini ? c.dia : null});
+    if(F === 'M' && ehData(c.ate)) out.fica[v.id] = (ehData(ev.dIni) && c.ate >= ev.dIni) ? 'desm' : c.ate;
+  });
+  return out;
+}
+function aplicarNaCentral(c, ev, cad){
+  const mud = [], prev = c.planeq || {};
+  const antes = JSON.stringify([c.mont, c.montFim, c.evt, c.evtFim, c.desm, c.desmFim]);
+  /* datas */
+  if(ev.tipo === 'manut'){
+    if(ehData(ev.mIni)){ c.mont = ev.mIni + (ev.hIni ? 'T' + ev.hIni : ''); c.montFim = ehData(ev.mFim) && ev.mFim !== ev.mIni ? ev.mFim : null; c.horaFim = ev.hFim || null; }
+    c.evt = null; c.evtFim = null; c.desm = null; c.desmFim = null; c.manutencao = true;
+  } else {
+    if(ehData(ev.mIni)){ c.mont = comHora(c.mont, ev.mIni); c.montFim = ehData(ev.mFim) ? ev.mFim : null; }
+    if(ehData(ev.eIni)){ c.evt = comHora(c.evt, ev.eIni); c.evtFim = ehData(ev.eFim) ? ev.eFim : null; }
+    if(ehData(ev.dIni)){ c.desm = comHora(c.desm, ev.dIni); c.desmFim = ehData(ev.dFim) ? ev.dFim : null; }
+  }
+  if(JSON.stringify([c.mont, c.montFim, c.evt, c.evtFim, c.desm, c.desmFim]) !== antes) mud.push('datas');
+  /* equipe */
+  const eqAntes = JSON.stringify([c.equipe, c.montOp, c.timeD, c.esp, c.tercEmpresa]);
+  if(ev.terc === 'tudo'){
+    c.esp = 'terceirizado'; c.equipe = C_TERC; c.montOp = null; c.timeD = null;
+    if(ev.tercEmpresa) c.tercEmpresa = ev.tercEmpresa;
+  } else if(ev.terc === 'equipe'){
+    if(c.esp === 'terceirizado') c.esp = null;
+    c.equipe = C_TERC; c.montOp = null; c.timeD = null;
+    if(ev.tercEmpresa) c.tercEmpresa = ev.tercEmpresa;
+  } else {
+    const q = equipeCentral(ev.eqM, ev.pesM, cad.equipes);
+    if(q){
+      if(c.esp === 'terceirizado') c.esp = null;
+      c.equipe = q.equipe; c.montOp = q.montOp;
+      if(ev.tipo !== 'manut' && ev.desmIgual === false && ehData(ev.dIni)) c.timeD = (ev.pesD||[]).filter(n=>n !== q.equipe);
+      else c.timeD = null;
+    } else if(c.equipe === C_TERC || prev.eq){ c.equipe = null; c.montOp = null; c.timeD = null; if(c.esp === 'terceirizado') c.esp = null; }   /* tiramos a equipe aqui: lá volta para a sugestão */
+  }
+  if(JSON.stringify([c.equipe, c.montOp, c.timeD, c.esp, c.tercEmpresa]) !== eqAntes) mud.push('equipe');
+  /* caminhões (todo terceirizado não leva caminhão nosso) */
+  const faltam = [];
+  if(ev.terc !== 'tudo' && camM(ev).length){
+    const frAntes = JSON.stringify([c.veiculos, c.escala, c.veiculosD, c.escalaD, c.fretes, c.fica]);
+    const m = frotaCentral(ev, 'M', cad.veiculos);
+    faltam.push(...m.faltam);
+    c.veiculos = m.veiculos; c.escala = m.escala; c.fica = Object.keys(m.fica).length ? m.fica : null;
+    let fretes = m.fretes;
+    if(ev.tipo !== 'manut' && ev.camDIgual === false && ehData(ev.dIni)){
+      const d = frotaCentral(ev, 'D', cad.veiculos);
+      faltam.push(...d.faltam);
+      c.veiculosD = d.veiculos; c.escalaD = d.escala; fretes = fretes.concat(d.fretes);
+    } else { c.veiculosD = null; c.escalaD = null; }
+    /* frete que já estava lá com valor e telefone continua com eles */
+    const velhos = c.fretes || [];
+    fretes = fretes.map(f=>{ const v = velhos.find(x=>x.fase === f.fase && placaN(x.placa) === placaN(f.placa)); return v ? Object.assign({}, v, {emp: f.emp || v.emp}) : f; });
+    c.fretes = fretes.length ? fretes : null;
+    if(JSON.stringify([c.veiculos, c.escala, c.veiculosD, c.escalaD, c.fretes, c.fica]) !== frAntes) mud.push('caminhões');
+  } else if(prev.cam && ev.terc !== 'tudo'){
+    /* tiramos os caminhões aqui: lá volta para a sugestão */
+    c.veiculos = null; c.escala = null; c.veiculosD = null; c.escalaD = null; c.fica = null; mud.push('caminhões');
+  }
+  c.planeq = {id: ev.id, em: new Date().toISOString(), eq: !!(ev.terc || (ev.pesM||[]).length), cam: ev.terc !== 'tudo' && camM(ev).length > 0};
+  if(mud.length) c.hist = [{q: new Date().toISOString(), quem: 'Planejamento de Equipes', o: ['🔗 Planejamento de Equipes mudou: ' + mud.join(', ')]}, ...(c.hist || [])].slice(0, 80);
+  return {mud, faltam};
+}
+function novoCardCentral(ev){
+  const f = semAc(ev.fasePipefy || '');
+  return {id: 'e' + Date.now() + Math.random().toString(36).slice(2, 6), nome: ev.nome, os: ev.os || '—', produtor: null, respNome: null, respTel: null,
+    cidade: ev.local || '—', local: '—', km: 0, mont: null, montFim: null, evt: null, evtFim: null, desm: null, desmFim: null,
+    permanece: false, estado: /alinhamento|responsav|logistic/.test(f) ? 'alinhamento' : 'backlog', aprovado: false, itens: [],
+    fase: ev.fasePipefy || null, origemPlaneq: ev.id};
+}
+/* acha o card da Central: ligação já feita → mesma OS → mesmo nome com datas perto */
+function acharNaCentral(ev, idx){
+  if(ev.centralId){ const x = idx.find(r=>r.id === ev.centralId); return x ? x : {apagado:true}; }
+  const dono = idx.find(r=>r.origem === ev.id); if(dono) return dono;
+  if(ev.tipo === 'manut') return null;
+  const o = osN(ev.os);
+  let L = o.length >= 3 ? idx.filter(r=>osN(r.os) === o && !r.origem) : [];
+  if(!L.length) L = idx.filter(r=>!r.origem && r.nome && mesmoNome(r.nome, ev.nome));
+  if(!L.length) return null;
+  const ref = [ev.mIni, ev.eIni, ev.dIni].find(ehData);
+  const dist = r => { const d = diaC(r.mont) || diaC(r.evt); return (ehData(d) && ref) ? Math.abs((new Date(d) - new Date(ref)) / 864e5) : 999; };
+  L.sort((a,b)=>dist(a) - dist(b));
+  if(ref && dist(L[0]) > 20 && dist(L[0]) !== 999) return null;   /* mesmo nome, mas outra edição do evento */
+  return L[0];
+}
+function ligarCentral(ev, cid, criado){
+  ev.centralId = cid; if(criado) ev.centralCriado = true;
+  ev.atual = Date.now(); SUJOS.add(ev.id); agendarEnvio();
+}
+async function enviarCentral(){
+  if(!sb || !NUVEM_OK) return;
+  if(CENT.enviando){ CENT.deNovo = true; return; }
+  if(!CENT_SUJOS.size && !CENT_APAGAR.size) return;
+  CENT.enviando = true;
+  const ids = [...CENT_SUJOS], apg = [...CENT_APAGAR];
+  CENT_SUJOS.clear(); CENT_APAGAR.clear();
+  try{
+    const [ri, rc] = await Promise.all([
+      sb.from(C_EV).select('id,nome:dados->>nome,os:dados->>os,mont:dados->>mont,evt:dados->>evt,origem:dados->>origemPlaneq'),
+      sb.from(C_CFG).select('equipes:dados->equipes,veiculos:dados->veiculos').eq('chave', 'cadastros')
+    ]);
+    if(ri.error) throw ri.error; if(rc.error) throw rc.error;
+    const idx = ri.data || [], cad = Object.assign({equipes:[], veiculos:[]}, (rc.data||[])[0] || {});
+    cad.equipes = cad.equipes || []; cad.veiculos = cad.veiculos || [];
+    /* 1) cards que criamos e o evento foi excluído aqui */
+    const apagar = apg.filter(([cid, pid])=>idx.some(r=>r.id === cid && r.origem === pid)).map(([cid])=>cid);
+    if(apagar.length){ const r = await sb.from(C_EV).delete().in('id', apagar); if(r.error) throw r.error; }
+    /* 2) eventos mudados */
+    const plano = [];
+    ids.forEach(id=>{
+      const ev = EV.find(e=>e.id === id);
+      if(!podeIrCentral(ev)) return;
+      const achou = acharNaCentral(ev, idx);
+      if(achou && achou.apagado) return;                 /* foi excluído na Central: não volta sozinho */
+      if(!temPlano(ev) && !(achou && ev.centralId)) return;   /* sem equipe, sem caminhão e nunca ligado: não mexe na Central */
+      plano.push({ev, cid: achou ? achou.id : null});
+    });
+    const existentes = plano.filter(p=>p.cid).map(p=>p.cid);
+    const cheios = {};
+    for(let i=0; i<existentes.length; i+=40){
+      const r = await sb.from(C_EV).select('id,dados').in('id', existentes.slice(i, i+40)); if(r.error) throw r.error;
+      (r.data||[]).forEach(x=>{ cheios[x.id] = x.dados; });
+    }
+    const linhas = [], agora = new Date().toISOString(), avisos = [];
+    let cri = 0, atu = 0;
+    plano.forEach(p=>{
+      let c = p.cid ? cheios[p.cid] : null, novo = false;
+      if(p.cid && !c) return;
+      if(!c){ c = novoCardCentral(p.ev); novo = true; }
+      const r = aplicarNaCentral(c, p.ev, cad);
+      delete CENT.avisosEv[p.ev.id];
+      if(r.faltam.length){ const a = p.ev.nome + ': caminhão ' + [...new Set(r.faltam)].join(', ') + ' não está cadastrado na Central'; avisos.push(a); CENT.avisosEv[p.ev.id] = a; }
+      if(novo || r.mud.length || !p.ev.centralId){ linhas.push({id: c.id, dados: c, atualizado_em: agora}); novo ? cri++ : atu++; }
+      if(p.ev.centralId !== c.id) ligarCentral(p.ev, c.id, novo);
+    });
+    for(let i=0; i<linhas.length; i+=25){ const r = await sb.from(C_EV).upsert(linhas.slice(i, i+25)); if(r.error) throw r.error; }
+    CENT.erro = null; CENT.ultimo = Date.now(); CENT.avisos = Object.values(CENT.avisosEv); CENT.criados += cri; CENT.atualizados += atu;
+    guardarLocal();
+    if(cri) toast('🔗 ' + cri + ' card(s) novo(s) criado(s) na Central de Planejamento.');
+    if(avisos.length) toast('⚠ ' + avisos[0] + (avisos.length > 1 ? ' (e mais ' + (avisos.length-1) + ')' : ''));
+  }catch(e){
+    CENT.erro = String((e && (e.message || e.msg)) || e);
+    ids.forEach(id=>CENT_SUJOS.add(id)); apg.forEach(([cid, pid])=>{ if(!CENT_APAGAR.has(cid)) CENT_APAGAR.set(cid, pid); }); guardarLocal();
+  }
+  finally{ CENT.enviando = false; if(CENT.deNovo){ CENT.deNovo = false; setTimeout(enviarCentral, 800); } if(ABERTO && ABERTO.tipo === 'nuvem') abrirNuvem(); }
+}
+function reenviarTudoCentral(){
+  EV.forEach(ev=>{ if(podeIrCentral(ev) && fimEv(ev) >= HOJE) CENT_SUJOS.add(ev.id); });
+  guardarLocal(); enviarCentral(); toast('🔗 Enviando tudo para a Central…');
+}
+function blocoCentralNuvem(){
+  const n = CENT_SUJOS.size + CENT_APAGAR.size;
+  const hora = CENT.ultimo ? new Date(CENT.ultimo).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}) : '';
+  return '<div class="sec"><h4>🔗 Central de Planejamento</h4>'+
+    '<div style="font-size:13px;color:var(--ink2);line-height:1.5">Tudo que você muda aqui (equipe, terceirizado, caminhões, datas e manutenções) vai sozinho para a Central. O que está preenchido aqui vale; o que está vazio aqui não apaga nada lá.</div>'+
+    (CENT.erro ? '<div class="alert red" style="margin-top:8px">Não consegui mandar para a Central agora: <small>'+esc(CENT.erro)+'</small><br>Tenta de novo sozinho em alguns segundos.</div>'
+      : '<div style="font-size:12.5px;margin-top:6px">'+(CENT.enviando ? '⏳ enviando…' : n ? '⏳ ' + n + ' mudança(s) para mandar' : '✅ Central em dia')+(hora ? ' · último envio ' + hora : '')+'</div>')+
+    (CENT.avisos.length ? '<div class="alert" style="margin-top:8px">'+CENT.avisos.slice(0,6).map(esc).join('<br>')+'</div>' : '')+
+    '<button class="mini" style="margin-top:8px" onclick="reenviarTudoCentral()">🔗 Mandar tudo de novo para a Central</button></div>';
+}
+
 /* ================= INÍCIO ================= */
 (function iniciar(){
   try{
     const d = JSON.parse(localStorage.getItem(LS) || 'null');
-    if(d){ EV = d.EV || []; if(d.CFG && d.CFG.equipes) CFG = d.CFG; SUJOS = new Set(d.sujos||[]); APAGADOS = new Set(d.apagados||[]); CFG_SUJO = !!d.cfgSujo; }
+    if(d){ EV = d.EV || []; if(d.CFG && d.CFG.equipes) CFG = d.CFG; SUJOS = new Set(d.sujos||[]); APAGADOS = new Set(d.apagados||[]); CFG_SUJO = !!d.cfgSujo; CENT_SUJOS = new Set(d.centSujos||[]); CENT_APAGAR = new Map(d.centApagar||[]); }
   }catch(e){}
   let aba = 'quadro'; try{ aba = localStorage.getItem('peq:aba') || 'quadro'; }catch(e){}
   garantirFrota();
@@ -1357,7 +1582,7 @@ function copiarSQL(){
   irAba(['quadro','cal','eq','frota'].includes(aba) ? aba : 'quadro');
   pintarSync();
   carregarNuvem();
-  setInterval(()=>{ if(!NUVEM_OK) carregarNuvem(); else if(pendentes() && !ENVIANDO) enviar(); }, 30000);
+  setInterval(()=>{ if(!NUVEM_OK) carregarNuvem(); else { if(pendentes() && !ENVIANDO) enviar(); if((CENT_SUJOS.size || CENT_APAGAR.size) && !CENT.enviando) enviarCentral(); } }, 30000);
   document.addEventListener('keydown', e=>{ if(e.key === 'Escape' && document.getElementById('ov').classList.contains('on')) fecharModal(); });
 })();
 </script>
