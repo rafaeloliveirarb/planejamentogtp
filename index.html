@@ -114,6 +114,7 @@ table.cal td.hoje{box-shadow:inset 0 0 0 2px #f3c98a}
 .cel.m{background:var(--m);color:#fff}
 .cel.d{background:var(--d);color:#fff}
 .cel.p{background:var(--p);color:#fff}
+.cel.r{background:#0f8a8a;color:#fff;font-size:10px}
 .cel.x{background:#e08a1e;color:#fff}
 .leg{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin:10px 0}
 .leg span{display:flex;align-items:center;gap:5px}
@@ -165,6 +166,7 @@ table.prev th{font-size:11px;color:var(--muted);background:#f6f8fc;position:stic
   <span class="sp"></span>
   <span id="sync" class="sync off" onclick="abrirNuvem()" title="Toque para ver a conexão">carregando…</span>
   <button class="pill" onclick="abrirImportar()">📥 <span class="so-pc">Importar planilha</span></button>
+  <button class="pill" onclick="novoEvento('manut')">🔧 <span class="so-pc">＋ Manutenção</span></button>
   <button class="pill pri" onclick="novoEvento()">＋ Evento</button>
 </header>
 <nav class="tabs">
@@ -213,6 +215,7 @@ table.prev th{font-size:11px;color:var(--muted);background:#f6f8fc;position:stic
       <span><i style="background:var(--m)"></i>M montagem</span>
       <span><i style="background:var(--d)"></i>D desmontagem</span>
       <span><i style="background:var(--p)"></i>P plantão no evento</span>
+      <span><i style="background:#0f8a8a"></i>MT manutenção</span>
       <span><i style="background:#e08a1e"></i>2 = dois eventos no mesmo dia</span>
       <span style="color:var(--muted)">toque no nome para ver o mês da pessoa</span>
     </div>
@@ -281,6 +284,9 @@ const SEM = ['dom','seg','ter','qua','qui','sex','sáb'];
 const MESES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
 const dm = s => ehData(s) ? s.slice(8) + '/' + s.slice(5,7) : '';
 const dmy = s => ehData(s) ? s.slice(8) + '/' + s.slice(5,7) + '/' + s.slice(0,4) : '';
+const faixaManut = ev => !ehData(ev.mIni) ? '—' : dm(ev.mIni) + (ev.hIni ? ' ' + ev.hIni : '') + ((ev.hFim || (ehData(ev.mFim) && ev.mFim !== ev.mIni)) ? ' → ' + dm(ev.mFim || ev.mIni) + (ev.hFim ? ' ' + ev.hFim : '') : '');
+const manutsDe = id => EV.filter(x=>x.tipo === 'manut' && x.paiId === id).sort((a,b)=>((a.mIni||'')+(a.hIni||'')).localeCompare((b.mIni||'')+(b.hIni||'')));
+let CRIA_MANUT = null;                          /* evento com o formulário de nova manutenção aberto */
 const faixa = (a, b) => !ehData(a) ? '—' : (ehData(b) && b !== a ? dm(a) + ' a ' + dm(b) : dm(a));
 const novoId = () => 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 function toast(t, rot, fn){
@@ -315,7 +321,7 @@ const eqD = ev => ev.desmIgual !== false ? (ev.eqM||[]) : (ev.eqD||[]);
 function diasPessoaEv(ev, nome){
   const out = [];
   if((ev.pesM||[]).includes(nome)){
-    diasM(ev).forEach(d=>out.push({d, t:'m'}));
+    diasM(ev).forEach(d=>out.push({d, t: ev.tipo === 'manut' ? 'r' : 'm'}));
     if(ev.plantao) diasE(ev).forEach(d=>out.push({d, t:'p'}));
   }
   if(pesD(ev).includes(nome)) diasD(ev).forEach(d=>out.push({d, t:'d'}));
@@ -349,6 +355,11 @@ function conflitosEv(ev){
 function faseEv(ev){
   const fim = [ev.dFim, ev.dIni, ev.eFim, ev.eIni, ev.mFim, ev.mIni].find(ehData);
   if(fim && fim < HOJE) return 'fim';
+  if(ev.tipo === 'manut'){
+    if(diasM(ev).includes(HOJE)) return 'manut';
+    if(ev.terc === 'tudo') return 'ok';
+    return (ev.terc !== 'equipe' && !(ev.pesM||[]).length) ? 'plan' : 'ok';
+  }
   if(diasD(ev).includes(HOJE)) return 'desm';
   if(diasE(ev).includes(HOJE)) return 'evt';
   if(diasM(ev).includes(HOJE)) return 'mont';
@@ -365,6 +376,7 @@ const FASES = [
   ['mont','🔨 MONTANDO','#1c5fb8'],
   ['evt','🎪 EM EVENTO','#6b4fb5'],
   ['desm','📤 DESMONTANDO','#c0392b'],
+  ['manut','🔧 EM MANUTENÇÃO','#0f8a8a'],
   ['fim','✔ CONCLUÍDO','#7a839e']
 ];
 const inicioEv = ev => [ev.mIni, ev.eIni, ev.dIni].find(ehData) || '9999';
@@ -413,28 +425,31 @@ function cardHtml(ev){
   const eqTxt = (eqs, pes, cls) => eqs.length ? eqs.map(e=>'<span class="chip '+cls+'">'+esc(e)+'</span>').join('') : (pes.length ? '<span class="chip '+cls+'">'+pes.length+' pessoa(s)</span>' : '');
   const temD = ehData(ev.dIni);
   return '<div class="card" style="border-left-color:'+cor+'" onclick="abrirEvento(\''+ev.id+'\')">'+
+    (ev.tipo === 'manut' ? '<div style="font-size:10.5px;font-weight:800;color:#0f8a8a;letter-spacing:.6px">🔧 MANUTENÇÃO</div>' : '')+
     '<div class="nome">'+esc(ev.nome || '(sem nome)')+'</div>'+
+    (function(){ const p = ev.paiId && EV.find(x=>x.id===ev.paiId); return p ? '<div class="sub">↳ do evento '+esc(p.nome)+'</div>' : ''; })()+
     ((ev.os || ev.local) ? '<div class="sub">'+esc([ev.os ? 'OS ' + ev.os : '', ev.local].filter(Boolean).join(' · '))+'</div>' : '')+
     (ev.escopo ? '<div class="sub" style="color:var(--ink2)">🧩 '+esc(ev.escopo)+'</div>' : '')+
     '<div class="datas">'+
-      (ehData(ev.mIni) ? '<span>🔨 <b>'+faixa(ev.mIni, ev.mFim)+'</b></span>' : '')+
+      (ehData(ev.mIni) ? '<span>'+(ev.tipo==='manut'?'🔧':'🔨')+' <b>'+(ev.tipo==='manut' ? faixaManut(ev) : faixa(ev.mIni, ev.mFim))+'</b></span>' : '')+
       (ehData(ev.eIni) ? '<span>🎪 '+faixa(ev.eIni, ev.eFim)+'</span>' : '')+
       (temD ? '<span>📤 <b>'+faixa(ev.dIni, ev.dFim)+'</b></span>' : '')+
     '</div>'+
     '<div class="eqs">'+
       (ev.terc ? '<span class="chip" style="background:#efe7fb;color:#5b3a9a">🤝 '+(ev.terc==='tudo'?'Tudo terceirizado':'Equipe terceirizada')+(ev.tercEmpresa?' · '+esc(ev.tercEmpresa):'')+'</span>' :
-      ((ev.pesM||[]).length ? '<span style="font-size:11px;color:var(--muted);font-weight:700">🔨</span>' + eqTxt(ev.eqM||[], ev.pesM||[], 'm') : '<span class="chip warn">🔨 sem equipe</span>')+
+      ((ev.pesM||[]).length ? '<span style="font-size:11px;color:var(--muted);font-weight:700">'+(ev.tipo==='manut'?'🔧':'🔨')+'</span>' + eqTxt(ev.eqM||[], ev.pesM||[], 'm') : '<span class="chip warn">'+(ev.tipo==='manut'?'🔧':'🔨')+' sem equipe</span>')+
       (temD ? (pesD(ev).length ? (ev.desmIgual === false ? '<span style="font-size:11px;color:var(--muted);font-weight:700">📤</span>' + eqTxt(eqD(ev), pesD(ev), 'd') : '') : '<span class="chip warn">📤 sem equipe</span>') : ''))+
-      (ev.terc === 'tudo' ? '' : camM(ev).length ? '<span style="font-size:11px;color:var(--muted);font-weight:700">🚚</span>' + camM(ev).map(c=>'<span class="chip">'+esc(c.v==='frete' ? 'frete' + (c.placa?' '+c.placa:'') : ((camObj(c.v)||{}).placa||'?'))+'</span>').join('') : '<span class="chip warn">🚚 sem caminhão</span>')+
+      (ev.terc === 'tudo' || (ev.tipo === 'manut' && !camM(ev).length) ? '' : camM(ev).length ? '<span style="font-size:11px;color:var(--muted);font-weight:700">🚚</span>' + camM(ev).map(c=>'<span class="chip">'+esc(c.v==='frete' ? 'frete' + (c.placa?' '+c.placa:'') : ((camObj(c.v)||{}).placa||'?'))+'</span>').join('') : '<span class="chip warn">🚚 sem caminhão</span>')+
       (conflitosFrotaEv(ev).length ? '<span class="chip bad">⚠ frota em dois lugares</span>' : '')+
       (cf.length ? '<span class="chip bad" title="'+esc(cf.map(c=>c.nome+' também em '+c.outroNome+' ('+dm(c.dia)+')').join('; '))+'">⚠ '+cf.length+' em dois lugares</span>' : '')+
       (ev.plantao ? '<span class="chip" style="background:var(--pbg);color:var(--p)">plantão</span>' : '')+
+      (function(){ const L = ev.tipo === 'manut' ? [] : manutsDe(ev.id); return L.length ? '<span class="chip" style="background:#e0f3f3;color:#0f6b6b">🔧 '+L.length+' manutenç'+(L.length>1?'ões':'ão')+'</span>' : ''; })()+
     '</div></div>';
 }
 
 /* ================= EVENTO (MODAL) ================= */
-function novoEvento(){
-  const ev = {id:novoId(), nome:'', os:'', local:'', mIni:'', mFim:'', eIni:'', eFim:'', dIni:'', dFim:'', eqM:[], pesM:[], eqD:[], pesD:[], desmIgual:true, plantao:false, obs:'', criado:Date.now()};
+function novoEvento(tipo){
+  const ev = {id:novoId(), nome:'', tipo: tipo === 'manut' ? 'manut' : '', os:'', local:'', mIni:'', mFim:'', eIni:'', eFim:'', dIni:'', dFim:'', eqM:[], pesM:[], eqD:[], pesD:[], desmIgual:true, plantao:false, obs:'', criado:Date.now()};
   EV.push(ev); salvarEv(ev, true);
   abrirEvento(ev.id);
   setTimeout(()=>{ const i = document.getElementById('ev-nome'); if(i) i.focus(); }, 60);
@@ -448,29 +463,36 @@ function abrirEvento(id, manterScroll){
   const linhaData = (rot, a, b) => '<div class="datas-ed"><b>'+rot+'</b>'+
     '<input type="date" value="'+(ev[a]||'')+'" onchange="setCampo(\''+id+'\',\''+a+'\',this.value)" title="começa">'+
     '<input type="date" value="'+(ev[b]||'')+'" onchange="setCampo(\''+id+'\',\''+b+'\',this.value)" title="termina (vazio = 1 dia)"></div>';
+  const linhaHora = (rot, a, b) => '<div class="datas-ed"><b>'+rot+'</b>'+
+    '<input type="date" value="'+(ev[a]||'')+'" onchange="setCampo(\''+id+'\',\''+a+'\',this.value)">'+
+    '<input type="time" value="'+(ev[b]||'')+'" onchange="setCampo(\''+id+'\',\''+b+'\',this.value)"></div>';
+  const pai = ev.paiId && EV.find(x=>x.id===ev.paiId);
   document.getElementById('modal').innerHTML =
-    '<header><h2>'+(ev.nome ? esc(ev.nome) : 'Novo evento')+'<div style="font-size:12px;color:var(--muted);font-weight:500;margin-top:2px">'+(FASES.find(x=>x[0]===faseEv(ev))||[])[1]+'</div></h2><button class="x" onclick="fecharModal()">✕</button></header>'+
+    '<header><h2>'+(ev.nome ? esc(ev.nome) : (ev.tipo==='manut'?'Nova manutenção':'Novo evento'))+'<div style="font-size:12px;color:var(--muted);font-weight:500;margin-top:2px">'+(FASES.find(x=>x[0]===faseEv(ev))||[])[1]+'</div></h2><button class="x" onclick="fecharModal()">✕</button></header>'+
     '<div class="mb">'+
-      '<label class="f"><i>Nome do evento</i><input id="ev-nome" value="'+esc(ev.nome)+'" placeholder="ex.: Feira de Niterói" onchange="setCampo(\''+id+'\',\'nome\',this.value.trim())"></label>'+
+      '<div style="display:flex;gap:6px;margin-bottom:10px">'+[['','🎪 Evento'],['manut','🔧 Manutenção']].map(([k,rot])=>'<button class="tbtn'+((ev.tipo||'')===k?' on':'')+'" onclick="setTipo(\''+id+'\',\''+k+'\')">'+rot+'</button>').join('')+'</div>'+
+      '<label class="f"><i>Nome '+(ev.tipo==='manut'?'da manutenção':'do evento')+'</i><input id="ev-nome" value="'+esc(ev.nome)+'" placeholder="'+(ev.tipo==='manut'?'ex.: Manutenção Rock The Mountain':'ex.: Feira de Niterói')+'" onchange="setCampo(\''+id+'\',\'nome\',this.value.trim())"></label>'+
       '<label class="f"><i>Escopo</i><input value="'+esc(ev.escopo||'')+'" placeholder="opcional — ex.: Piso, Forração, Tendas" onchange="setCampo(\''+id+'\',\'escopo\',this.value.trim())"></label>'+
       '<div class="g3"><label class="f"><i>Local / cidade</i><input value="'+esc(ev.local)+'" placeholder="opcional" onchange="setCampo(\''+id+'\',\'local\',this.value.trim())"></label>'+
       '<label class="f"><i>OS</i><input value="'+esc(ev.os)+'" placeholder="opcional" onchange="setCampo(\''+id+'\',\'os\',this.value.trim())"></label></div>'+
-      '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.5px;margin:4px 0 6px">DATAS <span style="font-weight:500;letter-spacing:0">— de / até (até vazio = um dia só)</span></div>'+
-      linhaData('🔨 Montagem','mIni','mFim')+linhaData('🎪 Evento','eIni','eFim')+linhaData('📤 Desmontagem','dIni','dFim')+
-      '<div class="sec"><h4>🤝 Quem faz a montagem e a desmontagem?</h4>'+
+      '<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.5px;margin:4px 0 6px">'+(ev.tipo==='manut' ? 'DIA E HORÁRIO' : 'DATAS <span style="font-weight:500;letter-spacing:0">— de / até (até vazio = um dia só)</span>')+'</div>'+
+      (ev.tipo === 'manut' ? linhaHora('▶ Início','mIni','hIni')+linhaHora('■ Término','mFim','hFim') : linhaData('🔨 Montagem','mIni','mFim')+linhaData('🎪 Evento','eIni','eFim')+linhaData('📤 Desmontagem','dIni','dFim'))+
+      (pai ? '<div style="margin:2px 0 8px;font-size:13px">↳ Manutenção do evento <a href="#" onclick="event.preventDefault();abrirEvento(\''+pai.id+'\')"><b>'+esc(pai.nome)+'</b></a></div>' : '')+
+      (ev.tipo === 'manut' ? '' : blocoManutEv(ev))+
+      '<div class="sec"><h4>🤝 Quem faz '+(ev.tipo==='manut'?'a manutenção':'a montagem e a desmontagem')+'?</h4>'+
         '<div style="display:flex;gap:6px;flex-wrap:wrap">'+[['','🏠 Nossa equipe'],['equipe','🤝 Equipe terceirizada'],['tudo','🤝 Tudo terceirizado']].map(([k,rot])=>
           '<button class="tbtn'+((ev.terc||'')===k?' on':'')+'" onclick="setTerc(\''+id+'\',\''+k+'\')">'+rot+'</button>').join('')+'</div>'+
         (ev.terc ? '<label class="f" style="margin-top:10px"><i>Empresa terceirizada</i><input value="'+esc(ev.tercEmpresa||'')+'" placeholder="nome da empresa (opcional)" onchange="setCampo(\''+id+'\',\'tercEmpresa\',this.value.trim())"></label>'+
           '<div style="font-size:12px;color:var(--muted)">'+(ev.terc==='tudo' ? 'Equipe e transporte por conta do terceiro — o evento não usa nossas equipes nem nossos caminhões.' : 'A equipe é do terceiro — nossas equipes ficam livres. Os nossos caminhões continuam abaixo, se formos levar o material.')+'</div>' : '')+
       '</div>'+
-      (ev.terc ? '' :
+      (ev.terc ? '' : ev.tipo === 'manut' ? blocoEquipe(ev, 'M').replace('🔨 Equipe da montagem', '🔧 Equipe da manutenção') :
       blocoEquipe(ev, 'M')+
       '<div class="sec"><h4>📤 Equipe da desmontagem</h4>'+
         '<label class="tog"><input type="checkbox" '+(ev.desmIgual!==false?'checked':'')+' onchange="setDesmIgual(\''+id+'\',this.checked)"> Mesma equipe da montagem</label>'+
         (ev.desmIgual===false ? blocoEquipe(ev, 'D', true) : '')+
       '</div>'+
       '<div class="sec"><label class="tog"><input type="checkbox" '+(ev.plantao?'checked':'')+' onchange="setCampo(\''+id+'\',\'plantao\',this.checked)"><span>🎪 A equipe da montagem fica de <b>plantão</b> nos dias do evento <small style="color:var(--muted)">(conta como dia trabalhado)</small></span></label></div>')+
-      (ev.terc === 'tudo' ? '' : blocoFrotaEv(ev, 'M')+(ehData(ev.dIni) ? blocoFrotaEv(ev, 'D') : ''))+
+      (ev.terc === 'tudo' ? '' : ev.tipo === 'manut' ? blocoFrotaEv(ev, 'M').replace('Caminhões da montagem', 'Caminhões (opcional)') : blocoFrotaEv(ev, 'M')+(ehData(ev.dIni) ? blocoFrotaEv(ev, 'D') : ''))+
       (function(){ const cff = conflitosFrotaEv(ev); return cff.length ? '<div class="alert red"><b>⚠ Frota em dois lugares:</b><br>'+cff.map(c=>'<b>'+esc(c.txt)+'</b> também está em <a href="#" onclick="event.preventDefault();abrirEvento(\''+c.outro.id+'\')">'+esc(c.outro.nome)+'</a> em '+dmy(c.dia)).join('<br>')+'</div>' : ''; })()+
       (cf.length ? '<div class="alert red"><b>⚠ Em dois lugares:</b><br>'+cf.map(c=>'<b>'+esc(c.nome)+'</b> também está em <a href="#" onclick="event.preventDefault();abrirEvento(\''+c.outro+'\')">'+esc(c.outroNome)+'</a> em '+dmy(c.dia)).join('<br>')+'</div>' : '')+
       '<label class="f" style="margin-top:12px"><i>Observação</i><textarea rows="2" placeholder="opcional" onchange="setCampo(\''+id+'\',\'obs\',this.value)">'+esc(ev.obs)+'</textarea></label>'+
@@ -478,6 +500,38 @@ function abrirEvento(id, manterScroll){
     '<div class="mf"><button class="mini danger" onclick="excluirEvento(\''+id+'\')">🗑 Excluir</button><button class="mini pri" onclick="fecharModal()">Pronto</button></div>';
   ov.classList.add('on');
   ov.scrollTop = st;
+}
+function blocoManutEv(ev){
+  const id = ev.id, L = manutsDe(id);
+  const lista = L.map(m=>{ const f = faseEv(m), F = FASES.find(x=>x[0]===f)||[];
+    return '<div onclick="abrirEvento(\''+m.id+'\')" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);border-left:4px solid '+(F[2]||'#0f8a8a')+';border-radius:10px;margin-bottom:6px;cursor:pointer;background:#fff">'+
+      '<b style="font-size:13px">🔧 '+faixaManut(m)+'</b>'+
+      '<span style="font-size:11.5px;font-weight:700;color:'+(F[2]||'#555')+'">'+(F[1]||'')+'</span>'+
+      '<span style="font-size:12px;color:var(--muted);flex:1;text-align:right">'+(m.terc ? '🤝 terceirizado' : (m.pesM||[]).length ? esc((m.eqM||[]).join(', ') || (m.pesM.length + ' pessoa(s)')) : 'sem equipe')+' ›</span></div>'; }).join('');
+  const form = CRIA_MANUT === id ?
+    '<div style="border:1.5px dashed #0f8a8a;border-radius:12px;padding:10px;background:#f2fafa">'+
+      '<div class="datas-ed"><b>▶ Início</b><input type="date" id="cm-di"><input type="time" id="cm-hi" value="08:00"></div>'+
+      '<div class="datas-ed"><b>■ Término</b><input type="date" id="cm-df"><input type="time" id="cm-hf" value="18:00"></div>'+
+      '<div id="cm-erro" style="color:var(--bad,#c0392b);font-size:12.5px;font-weight:600"></div>'+
+      '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px"><button class="mini" onclick="CRIA_MANUT=null;abrirEvento(\''+id+'\',true)">Cancelar</button><button class="mini pri" onclick="criarManutDo(\''+id+'\')">🔧 Criar manutenção</button></div>'+
+    '</div>' :
+    '<button class="tbtn" style="border-color:#0f8a8a;color:#0f6b6b" onclick="CRIA_MANUT=\''+id+'\';abrirEvento(\''+id+'\',true);setTimeout(()=>{const i=document.getElementById(\'cm-di\');if(i)i.focus()},60)">＋ Criar manutenção deste evento</button>';
+  return '<div class="sec"><h4>🔧 Manutenções deste evento</h4>'+lista+form+'</div>';
+}
+function criarManutDo(id){
+  const pai = EV.find(e=>e.id===id); if(!pai) return;
+  const v = k => (document.getElementById(k)||{}).value || '';
+  const di = v('cm-di'), hi = v('cm-hi'), df = v('cm-df'), hf = v('cm-hf');
+  const erro = t => { const e = document.getElementById('cm-erro'); if(e) e.textContent = t; };
+  if(!ehData(di) || !hi) return erro('Coloque o dia e o horário de início.');
+  if(!ehData(df) || !hf) return erro('Coloque o dia e o horário de término.');
+  if(df + hf <= di + hi) return erro('O término tem que ser depois do início.');
+  const m = {id:novoId(), nome:'MANUTENÇÃO ' + (pai.nome || ''), tipo:'manut', paiId:pai.id, escopo:pai.escopo||'', os:pai.os||'', local:pai.local||'',
+    mIni:di, mFim:df, hIni:hi, hFim:hf, eIni:'', eFim:'', dIni:'', dFim:'', eqM:[], pesM:[], eqD:[], pesD:[], desmIgual:true, plantao:false, obs:'', criado:Date.now()};
+  EV.push(m); salvarEv(m, true);
+  CRIA_MANUT = null;
+  abrirEvento(m.id); renderFundo();
+  toast('🔧 Manutenção criada — está em A PLANEJAR. Coloque a equipe para ir para PLANEJADO.');
 }
 function blocoEquipe(ev, F, semTitulo){
   const id = ev.id;
@@ -507,13 +561,21 @@ function blocoEquipe(ev, F, semTitulo){
 function setCampo(id, k, v){
   const ev = EV.find(e=>e.id===id); if(!ev) return;
   ev[k] = v;
+  if(k === 'nome' && !ev.tipo && /^\s*manuten/i.test(semAc(v)) && !ehData(ev.eIni) && !ehData(ev.dIni)){ ev.tipo = 'manut'; salvarEv(ev); abrirEvento(id, true); renderFundo(); return; }
   /* fim antes do início: some */
   [['mIni','mFim'],['eIni','eFim'],['dIni','dFim']].forEach(([a,b])=>{ if(ehData(ev[a]) && ehData(ev[b]) && ev[b] < ev[a]) ev[b] = ''; });
   if(k === 'mIni' && ehData(v) && !ev.eIni && !ev.dIni){ /* nada a fazer: deixa o resto pra pessoa */ }
   salvarEv(ev);
   if(!['obs','nome','local','os','escopo','tercEmpresa'].includes(k)) abrirEvento(id, true);
-  else if(k === 'nome'){ const h = document.querySelector('#modal header h2'); if(h && h.firstChild) h.firstChild.textContent = v || 'Novo evento'; }
+  else if(k === 'nome'){ const h = document.querySelector('#modal header h2'); if(h && h.firstChild) h.firstChild.textContent = v || ((EV.find(x=>x.id===id)||{}).tipo==='manut'?'Nova manutenção':'Novo evento'); }
   renderFundo();
+}
+function setTipo(id, k){
+  const ev = EV.find(e=>e.id===id); if(!ev || (ev.tipo||'') === k) return;
+  if(k === 'manut' && (ehData(ev.eIni) || ehData(ev.dIni)) && !confirm('Manutenção usa um período só (de / até). As datas de evento e de desmontagem vão sair. Continuar?')) return;
+  if(k === 'manut'){ ev.eIni = ev.eFim = ev.dIni = ev.dFim = ''; ev.pesD = []; ev.eqD = []; ev.desmIgual = true; ev.camD = []; ev.camDIgual = true; ev.plantao = false; }
+  ev.tipo = k;
+  salvarEv(ev); abrirEvento(id, true); renderFundo();
 }
 function setTerc(id, k){
   const ev = EV.find(e=>e.id===id); if(!ev) return;
@@ -576,7 +638,7 @@ function fecharModal(){
   document.getElementById('ov').classList.remove('on');
   /* evento novo largado sem nome e sem data: some sozinho */
   if(ABERTO && ABERTO.tipo === 'ev'){ const ev = EV.find(e=>e.id===ABERTO.id); if(ev && !ev.nome && !ehData(ev.mIni) && !ehData(ev.eIni) && !ehData(ev.dIni) && !(ev.pesM||[]).length){ EV = EV.filter(e=>e.id!==ev.id); apagarEv(ev.id); } }
-  ABERTO = null;
+  ABERTO = null; CRIA_MANUT = null;
   renderTudo();
 }
 function renderFundo(){ sujar(); const t = abaAtual(); if(t === 'quadro') renderQuadro(); else if(t === 'cal') renderCal(); }
@@ -813,7 +875,7 @@ function renderCal(){
       '<div class="tile"><b style="color:'+(R.dobr?'#e08a1e':'#0f8a4d')+'">'+R.dobr+'</b><small>dias em dois lugares</small></div>';
     return;
   }
-  if(leg) leg.innerHTML = '<span><i style="background:var(--m)"></i>M montagem</span><span><i style="background:var(--d)"></i>D desmontagem</span><span><i style="background:var(--p)"></i>P plantão no evento</span><span><i style="background:#e08a1e"></i>2 = dois eventos no mesmo dia</span><span style="color:var(--muted)">toque no nome para ver o mês da pessoa</span>';
+  if(leg) leg.innerHTML = '<span><i style="background:var(--m)"></i>M montagem</span><span><i style="background:var(--d)"></i>D desmontagem</span><span><i style="background:var(--p)"></i>P plantão no evento</span><span><i style="background:#0f8a8a"></i>MT manutenção</span><span><i style="background:#e08a1e"></i>2 = dois eventos no mesmo dia</span><span style="color:var(--muted)">toque no nome para ver o mês da pessoa</span>';
   const grupos = CFG.equipes.map(e=>({rot:(/^equipe\b/i.test(e.nome) ? '' : 'EQUIPE ') + e.nome.toUpperCase(), pessoas: pessoasDaEquipe(e)}));
   const vol = (CFG.volantes||[]).filter(v=>!grupos.some(g=>g.pessoas.includes(v)));
   if(vol.length) grupos.push({rot:'VOLANTES', pessoas: vol});
@@ -836,7 +898,7 @@ function renderCal(){
           if(L){
             const evs = [...new Set(L.map(x=>x.ev.id))];
             if(evs.length > 1){ dobrados++; c = '<span class="cel x" title="'+esc(L.map(x=>x.ev.nome).join(' + '))+'" onclick="abrirEvento(\''+evs[0]+'\')">2</span>'; }
-            else { const x = L[0]; c = '<span class="cel '+x.t+'" title="'+esc(({m:'Montagem',d:'Desmontagem',p:'Plantão'})[x.t]+' — '+x.ev.nome)+'" onclick="abrirEvento(\''+x.ev.id+'\')">'+x.t.toUpperCase()+'</span>'; }
+            else { const x = L[0]; c = '<span class="cel '+x.t+'" title="'+esc(({m:'Montagem',d:'Desmontagem',p:'Plantão',r:'Manutenção'})[x.t]+' — '+x.ev.nome)+'" onclick="abrirEvento(\''+x.ev.id+'\')">'+(x.t==='r'?'MT':x.t.toUpperCase())+'</span>'; }
           }
           return '<td class="'+(w===0||w===6?'fds ':'')+(d===HOJE?'hoje':'')+'">'+c+'</td>';
         }).join('')+'<td class="tot">'+(qt||'')+'</td></tr>';
@@ -857,7 +919,7 @@ function abrirPessoa(nome){
   const por = trabalhoPessoa(nome, dias);
   const qt = Object.keys(por).length;
   const porEv = {};
-  Object.keys(por).sort().forEach(d=>por[d].forEach(x=>{ const r = porEv[x.ev.id] = porEv[x.ev.id] || {ev:x.ev, m:0, d:0, p:0, dias:[]}; r[x.t]++; r.dias.push(d); }));
+  Object.keys(por).sort().forEach(d=>por[d].forEach(x=>{ const r = porEv[x.ev.id] = porEv[x.ev.id] || {ev:x.ev, m:0, d:0, p:0, r:0, dias:[]}; r[x.t]++; r.dias.push(d); }));
   const futuros = EV.filter(ev=>fimEv(ev) >= HOJE && ([...(ev.pesM||[]), ...pesD(ev)].includes(nome))).sort((a,b)=>inicioEv(a).localeCompare(inicioEv(b)));
   const eq = equipeDe(nome);
   document.getElementById('modal').innerHTML =
@@ -873,10 +935,10 @@ function abrirPessoa(nome){
         Array.from({length:new Date(dias[0]+'T12:00').getDay()}, ()=>'<div></div>').join('')+
         dias.map(d=>{ const L = por[d], evs = L ? [...new Set(L.map(x=>x.ev.id))] : [];
           const cls = !L ? '' : evs.length > 1 ? 'x' : L[0].t;
-          const bg = {m:'var(--m)', d:'var(--d)', p:'var(--p)', x:'#e08a1e'}[cls];
+          const bg = {m:'var(--m)', d:'var(--d)', p:'var(--p)', r:'#0f8a8a', x:'#e08a1e'}[cls];
           return '<div title="'+esc(L ? L.map(x=>x.ev.nome).join(' + ') : '')+'" style="border-radius:8px;min-height:44px;padding:4px;font-size:11px;'+(L?'background:'+bg+';color:#fff;cursor:pointer':'background:#f3f5fa;color:var(--muted)')+(d===HOJE?';box-shadow:inset 0 0 0 2px #f0851e':'')+'" '+(L?'onclick="abrirEvento(\''+evs[0]+'\')"':'')+'><b>'+(+d.slice(8))+'</b>'+(L?'<div style="font-size:10px;line-height:1.2;margin-top:2px;overflow:hidden;max-height:24px">'+esc(L[0].ev.nome)+'</div>':'')+'</div>'; }).join('')+
       '</div>'+
-      (Object.keys(porEv).length ? '<h4 style="margin:6px 0">Eventos no mês</h4>'+Object.values(porEv).map(r=>'<div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="abrirEvento(\''+r.ev.id+'\')"><b style="flex:1">'+esc(r.ev.nome)+'</b><span style="font-size:12px;color:var(--muted)">'+[r.m?r.m+' montagem':'', r.p?r.p+' plantão':'', r.d?r.d+' desmontagem':''].filter(Boolean).join(' · ')+'</span><b>'+r.dias.length+' dia(s)</b></div>').join('') : '<div class="empty">Sem trabalho neste mês.</div>')+
+      (Object.keys(porEv).length ? '<h4 style="margin:6px 0">Eventos no mês</h4>'+Object.values(porEv).map(r=>'<div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="abrirEvento(\''+r.ev.id+'\')"><b style="flex:1">'+esc(r.ev.nome)+'</b><span style="font-size:12px;color:var(--muted)">'+[r.r?r.r+' manutenção':'', r.m?r.m+' montagem':'', r.p?r.p+' plantão':'', r.d?r.d+' desmontagem':''].filter(Boolean).join(' · ')+'</span><b>'+r.dias.length+' dia(s)</b></div>').join('') : '<div class="empty">Sem trabalho neste mês.</div>')+
       (futuros.length ? '<h4 style="margin:14px 0 6px">Próximos eventos</h4>'+futuros.slice(0,8).map(ev=>'<div style="font-size:12.5px;padding:5px 0;cursor:pointer" onclick="abrirEvento(\''+ev.id+'\')"><b>'+esc(ev.nome)+'</b> <span style="color:var(--muted)">· '+((ev.pesM||[]).includes(nome)?'🔨 '+faixa(ev.mIni, ev.mFim):'')+(pesD(ev).includes(nome)?' 📤 '+faixa(ev.dIni, ev.dFim):'')+'</span></div>').join('') : '')+
     '</div><div class="mf"><span></span><button class="mini pri" onclick="fecharModal()">Fechar</button></div>';
   document.getElementById('ov').classList.add('on');
@@ -989,7 +1051,7 @@ function agruparRepetidos(mostrar){
     if(fora.has(a.id)) return;
     vivos.forEach(b=>{
       if(b === a || fora.has(b.id)) return;
-      if(mesmoNome(a.nome, b.nome) && datasPerto(a, b)){ juntarEventos(a, b); fora.add(b.id); n++; salvarEv(a); }
+      if((a.tipo||'') === (b.tipo||'') && mesmoNome(a.nome, b.nome) && datasPerto(a, b)){ juntarEventos(a, b); fora.add(b.id); n++; salvarEv(a); }
     });
   });
   /* limpa o nome dos que sobraram com número do card ou escopo no nome */
@@ -1151,6 +1213,7 @@ function gravarImport(){
     /* equipe escrita na planilha: casa com o nome de uma equipe cadastrada */
     if(ev.equipeTxt && /terceir/.test(semAc(ev.equipeTxt))){ ev.terc = /tudo|total|transporte|logistica/.test(semAc(ev.equipeTxt)) ? 'tudo' : 'equipe'; ev.tercEmpresa = ev.equipeTxt.replace(/.*terceiri[sz]ad[oa]s?\s*[-–:]?\s*/i,'').trim(); }
     else if(ev.equipeTxt){ const e = CFG.equipes.find(x=>semAc(ev.equipeTxt).includes(semAc(x.nome))); if(e){ ev.eqM = [e.nome]; ev.pesM = pessoasDaEquipe(e); } }
+    if(/^\s*manuten/.test(semAc(ev.nome)) || /manuten/.test(semAc(ev.faseTxt||''))){ ev.tipo = 'manut'; if(!ehData(ev.mIni)){ ev.mIni = ev.eIni || ev.dIni; } ev.eIni = ev.eFim = ev.dIni = ev.dFim = ''; }
     delete ev.equipeTxt; if(ev.faseTxt) ev.fasePipefy = ev.faseTxt; delete ev.faseTxt;
     EV.push(ev); salvarEv(ev, true); n++;
   });
